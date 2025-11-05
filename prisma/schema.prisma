@@ -11,10 +11,11 @@ model Task {
   id          String   @id @default(uuid())
   title       String
   completed   Boolean  @default(false)
-  priority    String?  @default("medium") // low | medium | high
-  category    String?  @default("other")
+  priority    String?  @default("medium")
   dueDate     DateTime?
+  category    String?  @default("other")
+  deleted     Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  deleted     Boolean  @default(false)
 }
+
