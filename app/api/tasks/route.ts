@@ -26,7 +26,7 @@ export async function GET(req: Request) {
       where: {
         deleted: false,
         ...(parsed.query && {
-          title: { contains: parsed.query, mode: "insensitive" },
+          title: { contains: parsed.query },
         }),
         ...(parsed.completed !== undefined && { completed: parsed.completed }),
         ...(parsed.priority && { priority: parsed.priority }),

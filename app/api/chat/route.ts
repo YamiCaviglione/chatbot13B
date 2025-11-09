@@ -1,179 +1,244 @@
-import { streamText, CoreMessage } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { NextRequest, NextResponse } from 'next/server';
+import { openrouter } from '@openrouter/ai-sdk-provider';
+import { generateText } from 'ai';
 import { z } from 'zod';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 
-/**
- * API Route para el chat conversacional con tool calling
- * Maneja las 5 herramientas principales del gestor de tareas
- */
-export async function POST(req: Request) {
+// Definición de los tools disponibles
+const tools = {
+  createTask: {
+    description: 'Crear una nueva tarea en el sistema',
+    parameters: z.object({
+      title: z.string().describe('Título de la tarea'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Prioridad de la tarea'),
+      dueDate: z.string().optional().describe('Fecha límite en formato ISO'),
+      category: z.string().optional().describe('Categoría de la tarea'),
+    }),
+    execute: async ({ title, priority, dueDate, category }: any) => {
+      const task = await prisma.task.create({
+        data: {
+          title,
+          priority: priority || 'medium',
+          dueDate: dueDate ? new Date(dueDate) : null,
+          category,
+        },
+      });
+      return {
+        success: true,
+        task,
+        message: `Tarea creada: "${title}" con prioridad ${priority || 'media'}`,
+      };
+    },
+  },
+
+  updateTask: {
+    description: 'Actualizar una tarea existente',
+    parameters: z.object({
+      taskId: z.string().describe('ID de la tarea a actualizar'),
+      title: z.string().optional().describe('Nuevo título'),
+      completed: z.boolean().optional().describe('Estado de completitud'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Nueva prioridad'),
+      dueDate: z.string().optional().describe('Nueva fecha límite'),
+      category: z.string().optional().describe('Nueva categoría'),
+    }),
+    execute: async ({ taskId, title, completed, priority, dueDate, category }: any) => {
+      const updateData: any = {};
+      if (title !== undefined) updateData.title = title;
+      if (completed !== undefined) {
+        updateData.completed = completed;
+        if (completed) {
+          updateData.completedAt = new Date();
+        }
+      }
+      if (priority !== undefined) updateData.priority = priority;
+      if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
+      if (category !== undefined) updateData.category = category;
+
+      const task = await prisma.task.update({
+        where: { id: taskId },
+        data: updateData,
+      });
+
+      return {
+        success: true,
+        task,
+        message: 'Tarea actualizada correctamente',
+      };
+    },
+  },
+
+  deleteTask: {
+    description: 'Eliminar una tarea',
+    parameters: z.object({
+      taskId: z.string().describe('ID de la tarea a eliminar'),
+    }),
+    execute: async ({ taskId }: any) => {
+      const task = await prisma.task.delete({
+        where: { id: taskId },
+      });
+      return {
+        success: true,
+        deletedTask: task.title,
+        message: `Tarea "${task.title}" eliminada correctamente`,
+      };
+    },
+  },
+
+  searchTasks: {
+    description: 'Buscar y filtrar tareas',
+    parameters: z.object({
+      query: z.string().optional().describe('Texto de búsqueda'),
+      completed: z.boolean().optional().describe('Filtrar por estado completado'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Filtrar por prioridad'),
+      category: z.string().optional().describe('Filtrar por categoría'),
+      limit: z.number().optional().describe('Número máximo de resultados'),
+    }),
+    execute: async ({ query, completed, priority, category, limit }: any) => {
+      const where: any = {};
+
+      if (query) {
+        where.title = { contains: query };
+      }
+      if (completed !== undefined) {
+        where.completed = completed;
+      }
+      if (priority) {
+        where.priority = priority;
+      }
+      if (category) {
+        where.category = category;
+      }
+
+      const tasks = await prisma.task.findMany({
+        where,
+        take: limit || 50,
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return {
+        success: true,
+        tasks,
+        totalFound: tasks.length,
+        message: `Se encontraron ${tasks.length} tareas`,
+      };
+    },
+  },
+
+  getTaskStats: {
+    description: 'Obtener estadísticas de las tareas',
+    parameters: z.object({
+      period: z.enum(['today', 'week', 'month', 'year', 'all-time']).optional().describe('Período de tiempo'),
+    }),
+    execute: async ({ period }: any) => {
+      const now = new Date();
+      let dateFilter: Date | undefined;
+
+      if (period === 'today') {
+        dateFilter = new Date(now.setHours(0, 0, 0, 0));
+      } else if (period === 'week') {
+        dateFilter = new Date(now.setDate(now.getDate() - 7));
+      } else if (period === 'month') {
+        dateFilter = new Date(now.setMonth(now.getMonth() - 1));
+      } else if (period === 'year') {
+        dateFilter = new Date(now.setFullYear(now.getFullYear() - 1));
+      }
+
+      const allTasks = await prisma.task.findMany({
+        where: dateFilter ? { createdAt: { gte: dateFilter } } : {},
+      });
+
+      const completedTasks = allTasks.filter((t) => t.completed);
+      const pendingTasks = allTasks.filter((t) => !t.completed);
+
+      const byPriority = {
+        high: {
+          total: allTasks.filter((t) => t.priority === 'high').length,
+          completed: completedTasks.filter((t) => t.priority === 'high').length,
+        },
+        medium: {
+          total: allTasks.filter((t) => t.priority === 'medium').length,
+          completed: completedTasks.filter((t) => t.priority === 'medium').length,
+        },
+        low: {
+          total: allTasks.filter((t) => t.priority === 'low').length,
+          completed: completedTasks.filter((t) => t.priority === 'low').length,
+        },
+      };
+
+      return {
+        success: true,
+        stats: {
+          totalTasks: allTasks.length,
+          completedTasks: completedTasks.length,
+          pendingTasks: pendingTasks.length,
+          completionRate: allTasks.length > 0 ? (completedTasks.length / allTasks.length) * 100 : 0,
+          byPriority,
+        },
+        message: `Estadísticas del período: ${period || 'todos los tiempos'}`,
+      };
+    },
+  },
+};
+
+export async function POST(request: NextRequest) {
   try {
-    const body = await req.json();
-    const messages: CoreMessage[] = body.messages;
+    const { messages } = await request.json();
 
-    // Configurar el stream de texto con las 5 herramientas integradas
-    const result = streamText({
-      model: openai('gpt-4o-mini'),
-      messages,
-      tools: {
-        // Tool 1: Crear una nueva tarea
-        createTask: {
-          description: 'Crea una nueva tarea en el sistema del usuario',
-          inputSchema: z.object({
-            title: z.string().describe('Titulo de la tarea'),
-            priority: z.enum(['low', 'medium', 'high']).optional().describe('Prioridad de la tarea'),
-            dueDate: z.string().optional().describe('Fecha limite en formato ISO'),
-            category: z.enum(['work', 'personal', 'shopping', 'health', 'other']).optional().describe('Categoria de la tarea'),
-          }),
-          execute: async ({ title, priority, dueDate, category }) => {
-            const task = await prisma.task.create({
-              data: {
-                title,
-                priority: priority || 'medium',
-                dueDate: dueDate ? new Date(dueDate) : null,
-                category: category || 'other',
-              },
-            });
-            return { success: true, task };
-          },
-        },
-        
-        // Tool 2: Actualizar una tarea existente
-        updateTask: {
-          description: 'Actualiza una tarea existente por su ID',
-          inputSchema: z.object({
-            taskId: z.string().describe('ID unico de la tarea'),
-            title: z.string().optional().describe('Nuevo titulo'),
-            completed: z.boolean().optional().describe('Estado de completitud'),
-            priority: z.enum(['low', 'medium', 'high']).optional().describe('Nueva prioridad'),
-            dueDate: z.string().optional().describe('Nueva fecha limite'),
-            category: z.enum(['work', 'personal', 'shopping', 'health', 'other']).optional().describe('Nueva categoria'),
-          }),
-          execute: async ({ taskId, title, completed, priority, dueDate, category }) => {
-            // Preparar datos para actualizacion solo con campos definidos
-            const updateData: Record<string, any> = {};
-            if (title !== undefined) updateData.title = title;
-            if (completed !== undefined) updateData.completed = completed;
-            if (priority !== undefined) updateData.priority = priority;
-            if (dueDate !== undefined) updateData.dueDate = new Date(dueDate);
-            if (category !== undefined) updateData.category = category;
-            
-            const task = await prisma.task.update({
-              where: { id: taskId },
-              data: updateData,
-            });
-            return { success: true, task };
-          },
-        },
-        
-        // Tool 3: Eliminar una tarea (soft delete)
-        deleteTask: {
-          description: 'Elimina una tarea del sistema mediante soft delete',
-          inputSchema: z.object({
-            taskId: z.string().describe('ID unico de la tarea a eliminar'),
-          }),
-          execute: async ({ taskId }) => {
-            const deletedTask = await prisma.task.update({
-              where: { id: taskId },
-              data: { deleted: true },
-            });
-            return { 
-              success: true, 
-              message: `Tarea eliminada: ${deletedTask.title}` 
-            };
-          },
-        },
-        
-        // Tool 4: Buscar y filtrar tareas
-        searchTasks: {
-          description: 'Busca y filtra tareas segun criterios especificos',
-          inputSchema: z.object({
-            query: z.string().optional().describe('Texto de busqueda en el titulo'),
-            completed: z.boolean().optional().describe('Filtrar por estado completado'),
-            priority: z.enum(['low', 'medium', 'high']).optional().describe('Filtrar por prioridad'),
-            category: z.enum(['work', 'personal', 'shopping', 'health', 'other']).optional().describe('Filtrar por categoria'),
-          }),
-          execute: async ({ query, completed, priority, category }) => {
-            // Construir objeto de filtros dinamicamente
-            const where: Record<string, any> = { deleted: false };
-            
-            if (query) {
-              where.title = { contains: query, mode: 'insensitive' };
-            }
-            if (completed !== undefined) {
-              where.completed = completed;
-            }
-            if (priority) {
-              where.priority = priority;
-            }
-            if (category) {
-              where.category = category;
-            }
+    // Configurar el modelo de OpenRouter
+    const model = openrouter('anthropic/claude-3.5-sonnet');
 
-            const tasks = await prisma.task.findMany({ 
-              where,
-              orderBy: { createdAt: 'desc' }
-            });
-            
-            return { 
-              count: tasks.length, 
-              tasks 
-            };
-          },
-        },
-        
-        // Tool 5: Obtener estadisticas de productividad
-        getTaskStats: {
-          description: 'Obtiene estadisticas y metricas de productividad del usuario',
-          inputSchema: z.object({}),
-          execute: async () => {
-            const tasks = await prisma.task.findMany({ 
-              where: { deleted: false } 
-            });
-            
-            const total = tasks.length;
-            const completed = tasks.filter((task) => task.completed).length;
-            const pending = total - completed;
-            const completionRate = total > 0 ? (completed / total) * 100 : 0;
-            
-            // Calcular estadisticas por prioridad
-            const byPriority = {
-              high: tasks.filter((t) => t.priority === 'high').length,
-              medium: tasks.filter((t) => t.priority === 'medium').length,
-              low: tasks.filter((t) => t.priority === 'low').length,
-            };
-            
-            // Calcular estadisticas por categoria
-            const byCategory = {
-              work: tasks.filter((t) => t.category === 'work').length,
-              personal: tasks.filter((t) => t.category === 'personal').length,
-              shopping: tasks.filter((t) => t.category === 'shopping').length,
-              health: tasks.filter((t) => t.category === 'health').length,
-              other: tasks.filter((t) => t.category === 'other').length,
-            };
-            
-            return{
-              summary: {
-                totalTasks: total,
-                completedTasks: completed,
-                pendingTasks: pending,
-                completionRate: Math.round(completionRate * 10) / 10,
-              },
-              byPriority,
-              byCategory,
-            };
-          },
-        },
+    // Crear el prompt del sistema
+    const systemPrompt = `Eres un asistente de gestión de tareas inteligente. Ayudas a los usuarios a organizar, crear, actualizar y gestionar sus tareas.
+
+Tienes acceso a 5 herramientas para gestionar tareas:
+1. createTask - Para crear nuevas tareas
+2. updateTask - Para actualizar tareas existentes
+3. deleteTask - Para eliminar tareas
+4. searchTasks - Para buscar y filtrar tareas
+5. getTaskStats - Para obtener estadísticas
+
+Cuando un usuario pida crear, actualizar, eliminar o buscar tareas, usa las herramientas correspondientes.
+Sé conciso pero amigable en tus respuestas. Confirma las acciones realizadas.`;
+
+    // Generar respuesta con tools
+    const result = await generateText({
+      model,
+      system: systemPrompt,
+      messages: messages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      tools: tools as any,
+    });
+
+    // Extraer el texto de la respuesta
+    let responseText = result.text;
+
+    // Si no hay texto pero hay tool results, crear un resumen
+    if (!responseText && result.steps) {
+      const toolResults = result.steps
+        .filter((step: any) => step.toolResults && step.toolResults.length > 0)
+        .flatMap((step: any) => step.toolResults);
+
+      if (toolResults.length > 0) {
+        responseText = toolResults
+          .map((tr: any) => tr.result.message || 'Acción completada')
+          .join('\n');
+      }
+    }
+
+    return NextResponse.json({
+      message: responseText || 'Procesado correctamente',
+      toolCalls: result.steps?.flatMap((step: any) => step.toolCalls || []),
+    });
+  } catch (error: any) {
+    console.error('Error en /api/chat:', error);
+    return NextResponse.json(
+      {
+        error: 'Error al procesar el mensaje',
+        details: error.message,
       },
-    });
-
-    return result.toTextStreamResponse();
-  } catch (error) {
-    console.error('Error en chat route:', error);
-    return new Response(JSON.stringify({ error: 'Error interno del servidor' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+      { status: 500 }
+    );
   }
 }
