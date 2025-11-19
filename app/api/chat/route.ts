@@ -14,10 +14,11 @@ function parseNaturalDate(dateStr: string): string | null {
   const now = new Date();
   const lowerStr = dateStr.toLowerCase().trim();
   
-  // Mañana
-  if (lowerStr.includes('mañana') || lowerStr.includes('manana')) {
+  // Mañana (sin incluir "pasado mañana")
+  if ((lowerStr.includes('mañana') || lowerStr.includes('manana')) && !lowerStr.includes('pasado')) {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 59, 999); // Final del día
     return tomorrow.toISOString();
   }
   
@@ -25,14 +26,58 @@ function parseNaturalDate(dateStr: string): string | null {
   if (lowerStr.includes('pasado mañana') || lowerStr.includes('pasado manana')) {
     const dayAfter = new Date(now);
     dayAfter.setDate(dayAfter.getDate() + 2);
+    dayAfter.setHours(23, 59, 59, 999);
     return dayAfter.toISOString();
   }
   
-  // Próxima semana
-  if (lowerStr.includes('proxima semana') || lowerStr.includes('próxima semana')) {
+  // Próxima semana / próximo [día de la semana]
+  if (lowerStr.includes('proxima semana') || lowerStr.includes('próxima semana') || 
+      lowerStr.includes('proximo') || lowerStr.includes('próximo')) {
     const nextWeek = new Date(now);
-    nextWeek.setDate(nextWeek.getDate() + 7);
+    
+    // Si menciona un día específico como "próximo lunes"
+    const days = ['domingo', 'lunes', 'martes', 'miercoles', 'miércoles', 'jueves', 'viernes', 'sabado', 'sábado'];
+    let targetDay = -1;
+    for (let i = 0; i < days.length; i++) {
+      if (lowerStr.includes(days[i])) {
+        targetDay = i % 7;
+        break;
+      }
+    }
+    
+    if (targetDay >= 0) {
+      const currentDay = now.getDay();
+      let daysToAdd = targetDay - currentDay;
+      if (daysToAdd <= 0) daysToAdd += 7; // Ir a la próxima semana
+      nextWeek.setDate(nextWeek.getDate() + daysToAdd);
+    } else {
+      nextWeek.setDate(nextWeek.getDate() + 7);
+    }
+    
+    nextWeek.setHours(23, 59, 59, 999);
     return nextWeek.toISOString();
+  }
+  
+  // "antes del lunes" / "para el lunes"
+  if (lowerStr.includes('antes del') || lowerStr.includes('para el') || lowerStr.includes('el ')) {
+    const days = ['domingo', 'lunes', 'martes', 'miercoles', 'miércoles', 'jueves', 'viernes', 'sabado', 'sábado'];
+    let targetDay = -1;
+    for (let i = 0; i < days.length; i++) {
+      if (lowerStr.includes(days[i])) {
+        targetDay = i % 7;
+        break;
+      }
+    }
+    
+    if (targetDay >= 0) {
+      const targetDate = new Date(now);
+      const currentDay = now.getDay();
+      let daysToAdd = targetDay - currentDay;
+      if (daysToAdd <= 0) daysToAdd += 7;
+      targetDate.setDate(targetDate.getDate() + daysToAdd);
+      targetDate.setHours(23, 59, 59, 999);
+      return targetDate.toISOString();
+    }
   }
   
   // En X días
@@ -41,13 +86,34 @@ function parseNaturalDate(dateStr: string): string | null {
     const days = parseInt(daysMatch[1]);
     const future = new Date(now);
     future.setDate(future.getDate() + days);
+    future.setHours(23, 59, 59, 999);
     return future.toISOString();
+  }
+  
+  // Formato DD/MM o DD/MM/YYYY
+  const dateMatch = dateStr.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
+  if (dateMatch) {
+    const day = parseInt(dateMatch[1]);
+    const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-indexed
+    let year = dateMatch[3] ? parseInt(dateMatch[3]) : now.getFullYear();
+    
+    // Si es año corto (25 → 2025)
+    if (year < 100) year += 2000;
+    
+    // Si la fecha ya pasó este año, usar el próximo año
+    const targetDate = new Date(year, month, day, 23, 59, 59, 999);
+    if (targetDate < now && !dateMatch[3]) {
+      targetDate.setFullYear(year + 1);
+    }
+    
+    return targetDate.toISOString();
   }
   
   // Si ya es formato ISO o fecha válida, devolverla
   try {
     const parsedDate = new Date(dateStr);
     if (!isNaN(parsedDate.getTime())) {
+      parsedDate.setHours(23, 59, 59, 999);
       return parsedDate.toISOString();
     }
   } catch (e) {
@@ -76,11 +142,16 @@ function createTools(userId: string) {
       if (dueDate) {
         parsedDueDate = parseNaturalDate(dueDate);
         
-        // Validar que la fecha no sea anterior a hoy
+        // Validar que la fecha no sea anterior a hoy (solo comparar fechas, no horas)
         if (parsedDueDate) {
           const dueDateObj = new Date(parsedDueDate);
           const now = new Date();
-          if (dueDateObj < now) {
+          
+          // Normalizar ambas fechas a medianoche para comparar solo días
+          const dueDateDay = new Date(dueDateObj.getFullYear(), dueDateObj.getMonth(), dueDateObj.getDate());
+          const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          
+          if (dueDateDay < todayDay) {
             return {
               success: false,
               error: 'La fecha límite no puede ser anterior a la fecha actual',

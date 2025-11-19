@@ -54,34 +54,18 @@ export async function GET(req: NextRequest) {
       },
     };
 
-    // Estadisticas por categoria
-    const byCategory = {
-      work: {
-        total: tasks.filter((t) => t.category === "work").length,
-        completed: tasks.filter((t) => t.category === "work" && t.completed).length,
-        pending: tasks.filter((t) => t.category === "work" && !t.completed).length,
-      },
-      personal: {
-        total: tasks.filter((t) => t.category === "personal").length,
-        completed: tasks.filter((t) => t.category === "personal" && t.completed).length,
-        pending: tasks.filter((t) => t.category === "personal" && !t.completed).length,
-      },
-      shopping: {
-        total: tasks.filter((t) => t.category === "shopping").length,
-        completed: tasks.filter((t) => t.category === "shopping" && t.completed).length,
-        pending: tasks.filter((t) => t.category === "shopping" && !t.completed).length,
-      },
-      health: {
-        total: tasks.filter((t) => t.category === "health").length,
-        completed: tasks.filter((t) => t.category === "health" && t.completed).length,
-        pending: tasks.filter((t) => t.category === "health" && !t.completed).length,
-      },
-      other: {
-        total: tasks.filter((t) => t.category === "other").length,
-        completed: tasks.filter((t) => t.category === "other" && t.completed).length,
-        pending: tasks.filter((t) => t.category === "other" && !t.completed).length,
-      },
-    };
+    // Estadisticas por categoria (dinámico - detecta todas las categorías usadas)
+    const uniqueCategories = [...new Set(tasks.map(t => t.category).filter(Boolean))];
+    const byCategory: Record<string, any> = {};
+    
+    for (const cat of uniqueCategories) {
+      const catTasks = tasks.filter((t) => t.category === cat);
+      byCategory[cat as string] = {
+        total: catTasks.length,
+        completed: catTasks.filter((t) => t.completed).length,
+        pending: catTasks.filter((t) => !t.completed).length,
+      };
+    }
 
     // Estadisticas temporales (hoy, semana, mes)
     const today = new Date();
@@ -136,7 +120,86 @@ export async function GET(req: NextRequest) {
         )[0] || null,
     };
 
+    // Estadísticas avanzadas
+    const completedTasks = tasks.filter(t => t.completed);
+    const pendingTasks = tasks.filter(t => !t.completed);
+    
+    // 1. Estadísticas por categoría con tasa de completitud
+    const categories = [...new Set(tasks.map(t => t.category).filter(Boolean))];
+    const byCategoryAdvanced: any = {};
+    
+    for (const cat of categories) {
+      const catTasks = tasks.filter(t => t.category === cat);
+      const catCompleted = catTasks.filter(t => t.completed);
+      byCategoryAdvanced[cat!] = {
+        total: catTasks.length,
+        completed: catCompleted.length,
+        completionRate: catTasks.length > 0 ? (catCompleted.length / catTasks.length) * 100 : 0
+      };
+    }
+
+    // 2. Tendencia de productividad (últimos 7 días vs anteriores 7 días)
+    const last7Completed = completedTasks.filter(t => {
+      if (!t.completedAt) return false;
+      const diff = now.getTime() - new Date(t.completedAt).getTime();
+      return diff <= 7 * 24 * 60 * 60 * 1000;
+    }).length;
+    
+    const prev7Completed = completedTasks.filter(t => {
+      if (!t.completedAt) return false;
+      const diff = now.getTime() - new Date(t.completedAt).getTime();
+      return diff > 7 * 24 * 60 * 60 * 1000 && diff <= 14 * 24 * 60 * 60 * 1000;
+    }).length;
+    
+    const productivityTrend = {
+      current: last7Completed,
+      previous: prev7Completed,
+      change: last7Completed - prev7Completed,
+      status: last7Completed > prev7Completed ? 'mejorando' : 
+              last7Completed < prev7Completed ? 'empeorando' : 'estable'
+    };
+
+    // 3. Categorías descuidadas (menos del 50% completitud)
+    const neglectedCategories = Object.entries(byCategoryAdvanced)
+      .filter(([_, data]: any) => data.total > 0 && data.completionRate < 50)
+      .map(([cat, data]: any) => ({ 
+        category: cat, 
+        completionRate: data.completionRate,
+        pending: data.total - data.completed 
+      }));
+
+    // 4. Predicciones de finalización
+    const tasksWithDuration = completedTasks.filter(t => t.completedAt && t.createdAt);
+    let predictions = null;
+    
+    if (tasksWithDuration.length > 0) {
+      const avgDuration = tasksWithDuration.reduce((sum, t) => {
+        const duration = new Date(t.completedAt!).getTime() - new Date(t.createdAt).getTime();
+        return sum + duration;
+      }, 0) / tasksWithDuration.length;
+
+      const avgDays = Math.round(avgDuration / (24 * 60 * 60 * 1000));
+      
+      predictions = {
+        averageCompletionTime: `${avgDays} días`,
+        estimatedCompletionDate: pendingTasks.length > 0 
+          ? new Date(now.getTime() + (avgDuration * pendingTasks.length)).toISOString()
+          : null,
+        pendingTasksCount: pendingTasks.length
+      };
+    }
+
     return NextResponse.json({
+      stats: {
+        totalTasks: total,
+        completedTasks: completed,
+        pendingTasks: pending,
+        completionRate: Math.round(completionRate * 10) / 10,
+        byCategory: byCategoryAdvanced,
+        productivityTrend,
+        neglectedCategories,
+        predictions
+      },
       summary: {
         totalTasks: total,
         completedTasks: completed,

@@ -179,37 +179,20 @@ export default function ChatPage() {
     if (!showStats) {
       setShowStats(true);
       setLoadingStats(true);
+      
       try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        // Cargar estadísticas directamente desde /api/tasks/stats
+        const response = await fetch('/api/tasks/stats', {
+          method: 'GET',
           credentials: 'include',
-          body: JSON.stringify({
-            messages: [{
-              role: 'user',
-              content: 'Quiero ver todas las estadísticas avanzadas de mis tareas incluyendo tendencias y predicciones'
-            }]
-          }),
         });
+        
         if (response.ok) {
           const data = await response.json();
-          console.log('Respuesta de estadísticas:', data);
-          
-          // Extraer las estadísticas del toolCall
-          const statsToolCall = data.toolCalls?.find((tc: any) => tc.tool === 'getTaskStats');
-          if (statsToolCall?.result?.stats) {
-            setStats(statsToolCall.result.stats);
-          } else if (data.toolCalls && data.toolCalls.length > 0) {
-            // Buscar en todos los toolCalls
-            for (const tc of data.toolCalls) {
-              if (tc.result?.stats) {
-                setStats(tc.result.stats);
-                break;
-              }
-            }
-          } else {
-            console.log('No se encontraron estadísticas en la respuesta');
-          }
+          console.log('Estadísticas recibidas:', data);
+          setStats(data.stats);
+        } else {
+          console.error('Error al cargar estadísticas:', response.status);
         }
       } catch (error) {
         console.error('Error al cargar estadísticas:', error);
@@ -750,7 +733,7 @@ export default function ChatPage() {
                             <div className="capitalize font-bold text-lg text-red-700 mb-2">{cat.category}</div>
                             <div className="text-sm text-gray-600 space-y-1">
                               <div>{cat.pending} tareas pendientes</div>
-                              <div>Solo {cat.completionRate.toFixed(0)}% completadas</div>
+                              <div>{cat.completionRate.toFixed(0)}% completadas</div>
                             </div>
                           </div>
                         ))}
