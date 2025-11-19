@@ -66,6 +66,9 @@ export default function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user, isLoading: authLoading, logout } = useAuth();
@@ -85,10 +88,10 @@ export default function ChatPage() {
     }
   }, [user]);
 
-  // Scroll automático
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  // Scroll automático deshabilitado para mejor UX
+  // useEffect(() => {
+  //   messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // }, [messages]);
 
   // Función para cargar tareas
   const loadTasks = async () => {
@@ -110,6 +113,11 @@ export default function ChatPage() {
 
   // Función para marcar/desmarcar tarea
   const toggleTask = async (taskId: string, completed: boolean) => {
+    // Actualización optimista en el frontend
+    setTasks(prev => prev.map(t => 
+      t.id === taskId ? { ...t, completed: !completed, updatedAt: new Date().toISOString() } : t
+    ));
+    
     try {
       const response = await fetch('/api/tasks', {
         method: 'PUT',
@@ -117,11 +125,18 @@ export default function ChatPage() {
         credentials: 'include',
         body: JSON.stringify({ id: taskId, completed: !completed }),
       });
-      if (response.ok) {
-        loadTasks();
+      if (!response.ok) {
+        // Revertir cambio si falla
+        setTasks(prev => prev.map(t => 
+          t.id === taskId ? { ...t, completed: completed } : t
+        ));
       }
     } catch (error) {
       console.error('Error al actualizar tarea:', error);
+      // Revertir cambio si hay error
+      setTasks(prev => prev.map(t => 
+        t.id === taskId ? { ...t, completed: completed } : t
+      ));
     }
   };
 
@@ -157,6 +172,53 @@ export default function ChatPage() {
       }
     }
     loadTasks();
+  };
+
+  // Función para cargar estadísticas avanzadas
+  const loadStats = async () => {
+    if (!showStats) {
+      setShowStats(true);
+      setLoadingStats(true);
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            messages: [{
+              role: 'user',
+              content: 'Quiero ver todas las estadísticas avanzadas de mis tareas incluyendo tendencias y predicciones'
+            }]
+          }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Respuesta de estadísticas:', data);
+          
+          // Extraer las estadísticas del toolCall
+          const statsToolCall = data.toolCalls?.find((tc: any) => tc.tool === 'getTaskStats');
+          if (statsToolCall?.result?.stats) {
+            setStats(statsToolCall.result.stats);
+          } else if (data.toolCalls && data.toolCalls.length > 0) {
+            // Buscar en todos los toolCalls
+            for (const tc of data.toolCalls) {
+              if (tc.result?.stats) {
+                setStats(tc.result.stats);
+                break;
+              }
+            }
+          } else {
+            console.log('No se encontraron estadísticas en la respuesta');
+          }
+        }
+      } catch (error) {
+        console.error('Error al cargar estadísticas:', error);
+      } finally {
+        setLoadingStats(false);
+      }
+    } else {
+      setShowStats(false);
+    }
   };
 
   // Función para enviar mensaje
@@ -212,7 +274,12 @@ export default function ChatPage() {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-      loadTasks(); // Recargar tareas después de la respuesta
+      // Solo recargar tareas si se usó una herramienta de tareas
+      if (data.toolCalls && data.toolCalls.some((tc: any) => 
+        ['createTask', 'updateTask', 'deleteTask', 'editTaskByTitle'].includes(tc.tool)
+      )) {
+        loadTasks();
+      }
     } catch (error) {
       console.error('Error al enviar mensaje:', error);
       const errorMessage: Message = {
@@ -268,8 +335,14 @@ export default function ChatPage() {
                 <p className="font-semibold text-gray-800">{user.name}</p>
               </div>
               <button
+                onClick={loadStats}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
+              >
+                📊 Estadísticas
+              </button>
+              <button
                 onClick={logout}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-medium"
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200 text-sm font-medium"
               >
                 Salir
               </button>
@@ -372,7 +445,7 @@ export default function ChatPage() {
               <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-bold">📋 Mis Tareas</h2>
+                    <h2 className="text-lg font-bold">Mis Tareas</h2>
                     <p className="text-xs opacity-90">
                       {tasks.filter(t => !t.completed).length} pendientes
                     </p>
@@ -426,7 +499,7 @@ export default function ChatPage() {
                           type="checkbox"
                           checked={task.completed}
                           onChange={() => toggleTask(task.id, task.completed)}
-                          className="mt-1 w-4 h-4 cursor-pointer"
+                          className="mt-1 w-4 h-4 cursor-pointer transition-all duration-200"
                         />
                         <div className="flex-1">
                           <p
@@ -436,17 +509,37 @@ export default function ChatPage() {
                           >
                             {task.title}
                           </p>
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
-                              {task.priority === 'high' && '🔴 Alta'}
-                              {task.priority === 'medium' && '🟡 Media'}
-                              {task.priority === 'low' && '🟢 Baja'}
-                            </span>
-                            {task.category && (
-                              <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
-                                {task.category}
+                          <div className="mt-2 space-y-1">
+                            <div className="flex flex-wrap gap-1">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
+                                {task.priority === 'high' && '🔴 Alta'}
+                                {task.priority === 'medium' && '🟡 Media'}
+                                {task.priority === 'low' && '🟢 Baja'}
                               </span>
-                            )}
+                              {task.category && (
+                                <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
+                                  {task.category}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 space-y-0.5">
+                              {task.dueDate && (
+                                <div className="flex items-center gap-1">
+                                  <span>📅</span>
+                                  <span>Vence: {new Date(task.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span>🕐</span>
+                                <span>Creada: {new Date(task.createdAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                              </div>
+                              {task.updatedAt !== task.createdAt && (
+                                <div className="flex items-center gap-1">
+                                  <span>✏️</span>
+                                  <span>Editada: {new Date(task.updatedAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -457,27 +550,30 @@ export default function ChatPage() {
 
               {/* Footer */}
               {tasks.length > 0 && (
-                <div className="border-t border-gray-200 p-3 bg-white space-y-2">
-                  <div className="text-xs text-gray-600 flex justify-between">
-                    <span>✅ {tasks.filter(t => t.completed).length} completadas</span>
-                    <span>📊 {tasks.length} total</span>
-                  </div>
-                  {tasks.filter(t => t.completed).length > 0 && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={deleteCompleted}
-                        className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors font-medium"
-                      >
-                        🗑️ Borrar completadas
-                      </button>
-                      <button
-                        onClick={uncheckAll}
-                        className="flex-1 px-3 py-1.5 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600 transition-colors font-medium"
-                      >
-                        ↩️ Desmarcar todas
-                      </button>
+                <div className="border-t border-gray-200 bg-white">
+                  <div className="p-3 space-y-2">
+                    <div className="text-xs text-gray-600 flex justify-between">
+                      <span> {tasks.filter(t => t.completed).length} completadas</span>
+                      <span> {tasks.length} total</span>
                     </div>
-                  )}
+
+                    {tasks.filter(t => t.completed).length > 0 && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={deleteCompleted}
+                          className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors font-medium"
+                        >
+                          Borrar completadas
+                        </button>
+                        <button
+                          onClick={uncheckAll}
+                          className="flex-1 px-3 py-1.5 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600 transition-colors font-medium"
+                        >
+                          Desmarcar todas
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -485,6 +581,194 @@ export default function ChatPage() {
 
         </div>
       </div>
+
+      {/* Modal de Estadísticas */}
+      {showStats && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowStats(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del modal */}
+            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold">📊 Estadísticas Avanzadas</h2>
+                  <p className="text-sm opacity-90 mt-1">Análisis completo de tus tareas</p>
+                </div>
+                <button
+                  onClick={() => setShowStats(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-all duration-200"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido del modal */}
+            <div className="p-6 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 100px)' }}>
+              {loadingStats ? (
+                <div className="text-center text-gray-500 py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                  <p className="text-lg">Calculando estadísticas...</p>
+                </div>
+              ) : stats ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Resumen general */}
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
+                    <h3 className="font-bold text-xl text-blue-900 mb-4 flex items-center gap-2">
+                      <span>📊</span> Resumen General
+                    </h3>
+                    <div className="space-y-3 text-gray-700">
+                      <div className="flex justify-between items-center">
+                        <span>Total de tareas:</span>
+                        <span className="font-bold text-xl">{stats.totalTasks}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>Completadas:</span>
+                        <span className="font-bold text-xl text-green-600">{stats.completedTasks}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>Pendientes:</span>
+                        <span className="font-bold text-xl text-orange-600">{stats.pendingTasks}</span>
+                      </div>
+                      <div className="pt-3 border-t border-blue-300">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold">Tasa de completitud:</span>
+                          <span className="font-bold text-2xl text-blue-600">{stats.completionRate.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Por categoría */}
+                  {stats.byCategory && Object.keys(stats.byCategory).length > 0 && (
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
+                      <h3 className="font-bold text-xl text-purple-900 mb-4 flex items-center gap-2">
+                        <span>📂</span> Por Categoría
+                      </h3>
+                      <div className="space-y-2">
+                        {Object.entries(stats.byCategory).map(([cat, data]: any) => (
+                          <div key={cat} className="bg-white p-3 rounded-lg">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="capitalize font-medium text-gray-700">{cat}</span>
+                              <span className="font-bold text-purple-600">{data.completionRate.toFixed(0)}%</span>
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {data.completed}/{data.total} completadas
+                            </div>
+                            <div className="mt-2 bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-purple-600 h-2 rounded-full transition-all duration-500"
+                                style={{ width: `${data.completionRate}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tendencia de productividad */}
+                  {stats.productivityTrend && (
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
+                      <h3 className="font-bold text-xl text-green-900 mb-4 flex items-center gap-2">
+                        <span>📈</span> Tendencia de Productividad
+                      </h3>
+                      <div className="space-y-3 text-gray-700">
+                        <div className="flex justify-between items-center">
+                          <span>Última semana:</span>
+                          <span className="font-bold text-lg">{stats.productivityTrend.current} completadas</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span>Semana anterior:</span>
+                          <span className="font-bold text-lg">{stats.productivityTrend.previous} completadas</span>
+                        </div>
+                        <div className="pt-3 border-t border-green-300">
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold">Estado:</span>
+                            <span className={`font-bold text-xl flex items-center gap-2 ${
+                              stats.productivityTrend.status === 'mejorando' ? 'text-green-600' :
+                              stats.productivityTrend.status === 'empeorando' ? 'text-red-600' :
+                              'text-gray-600'
+                            }`}>
+                              {stats.productivityTrend.status === 'mejorando' && '↗️ Mejorando'}
+                              {stats.productivityTrend.status === 'empeorando' && '↘️ Empeorando'}
+                              {stats.productivityTrend.status === 'estable' && '→ Estable'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Predicciones */}
+                  {stats.predictions && (
+                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
+                      <h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
+                        <span>🔮</span> Predicciones
+                      </h3>
+                      <div className="space-y-3 text-gray-700">
+                        <div className="bg-white p-3 rounded-lg">
+                          <div className="text-sm text-gray-600 mb-1">Tiempo promedio de completitud:</div>
+                          <div className="font-bold text-lg text-cyan-600">{stats.predictions.averageCompletionTime}</div>
+                        </div>
+                        <div className="bg-white p-3 rounded-lg">
+                          <div className="text-sm text-gray-600 mb-1">Tareas pendientes:</div>
+                          <div className="font-bold text-lg text-cyan-600">{stats.predictions.pendingTasksCount}</div>
+                        </div>
+                        {stats.predictions.estimatedCompletionDate && (
+                          <div className="bg-white p-3 rounded-lg">
+                            <div className="text-sm text-gray-600 mb-1">Fecha estimada de finalización:</div>
+                            <div className="font-bold text-lg text-cyan-600">
+                              {new Date(stats.predictions.estimatedCompletionDate).toLocaleDateString('es-AR', { 
+                                day: '2-digit', 
+                                month: 'long', 
+                                year: 'numeric' 
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Categorías descuidadas */}
+                  {stats.neglectedCategories && stats.neglectedCategories.length > 0 && (
+                    <div className="bg-gradient-to-br from-red-50 to-red-100 p-6 rounded-xl border border-red-200 md:col-span-2">
+                      <h3 className="font-bold text-xl text-red-900 mb-4 flex items-center gap-2">
+                        <span>⚠️</span> Categorías Descuidadas
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {stats.neglectedCategories.map((cat: any) => (
+                          <div key={cat.category} className="bg-white p-4 rounded-lg border border-red-200">
+                            <div className="capitalize font-bold text-lg text-red-700 mb-2">{cat.category}</div>
+                            <div className="text-sm text-gray-600 space-y-1">
+                              <div>{cat.pending} tareas pendientes</div>
+                              <div>Solo {cat.completionRate.toFixed(0)}% completadas</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center text-gray-500 py-12">
+                  <div className="text-6xl mb-4">📊</div>
+                  <p className="text-lg font-semibold">No hay estadísticas disponibles</p>
+                  <p className="text-sm mt-2">Crea algunas tareas para ver tus estadísticas</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
