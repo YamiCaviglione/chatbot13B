@@ -6,6 +6,58 @@ import { groq, GROQ_MODEL, validateGroqConfig } from '@/lib/groq';
 import type Groq from 'groq-sdk';
 
 /**
+ * Función auxiliar para parsear fechas naturales a ISO
+ */
+function parseNaturalDate(dateStr: string): string | null {
+  if (!dateStr) return null;
+  
+  const now = new Date();
+  const lowerStr = dateStr.toLowerCase().trim();
+  
+  // Mañana
+  if (lowerStr.includes('mañana') || lowerStr.includes('manana')) {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString();
+  }
+  
+  // Pasado mañana
+  if (lowerStr.includes('pasado mañana') || lowerStr.includes('pasado manana')) {
+    const dayAfter = new Date(now);
+    dayAfter.setDate(dayAfter.getDate() + 2);
+    return dayAfter.toISOString();
+  }
+  
+  // Próxima semana
+  if (lowerStr.includes('proxima semana') || lowerStr.includes('próxima semana')) {
+    const nextWeek = new Date(now);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return nextWeek.toISOString();
+  }
+  
+  // En X días
+  const daysMatch = lowerStr.match(/en (\d+) d[ií]as?/);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1]);
+    const future = new Date(now);
+    future.setDate(future.getDate() + days);
+    return future.toISOString();
+  }
+  
+  // Si ya es formato ISO o fecha válida, devolverla
+  try {
+    const parsedDate = new Date(dateStr);
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.toISOString();
+    }
+  } catch (e) {
+    // Ignorar errores de parseo
+  }
+  
+  return null;
+}
+
+/**
  * Función para crear los tools con el usuario autenticado
  */
 function createTools(userId: string) {
@@ -15,23 +67,44 @@ function createTools(userId: string) {
     parameters: z.object({
       title: z.string().describe('Título de la tarea'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Prioridad de la tarea'),
-      dueDate: z.string().optional().describe('Fecha límite en formato ISO'),
+      dueDate: z.string().optional().describe('Fecha límite (puede ser natural como "mañana" o ISO)'),
       category: z.string().optional().describe('Categoría de la tarea'),
     }),
     execute: async ({ title, priority, dueDate, category }: any) => {
+      // Parsear fecha natural si existe
+      let parsedDueDate = null;
+      if (dueDate) {
+        parsedDueDate = parseNaturalDate(dueDate);
+        
+        // Validar que la fecha no sea anterior a hoy
+        if (parsedDueDate) {
+          const dueDateObj = new Date(parsedDueDate);
+          const now = new Date();
+          if (dueDateObj < now) {
+            return {
+              success: false,
+              error: 'La fecha límite no puede ser anterior a la fecha actual',
+            };
+          }
+        }
+      }
+      
+      // Asegurar que siempre haya una categoría (nunca 'other')
+      const finalCategory = category || 'personal';
+      
       const task = await prisma.task.create({
         data: {
           title,
           priority: (priority as "low" | "medium" | "high") || 'medium',
-          dueDate: dueDate ? new Date(dueDate) : null,
-          category,
+          dueDate: parsedDueDate ? new Date(parsedDueDate) : null,
+          category: finalCategory,
           userId: userId,
         },
       });
       return {
         success: true,
         task,
-        message: `Tarea creada: "${title}" con prioridad ${priority || 'media'}`,
+        message: `Tarea creada: "${title}" con prioridad ${priority || 'media'}${parsedDueDate ? ` para ${new Date(parsedDueDate).toLocaleDateString()}` : ''}`,
       };
     },
   },
@@ -285,11 +358,12 @@ function createTools(userId: string) {
   },
 
   getTaskStats: {
-    description: 'Obtener estadísticas de las tareas',
+    description: 'Obtener estadísticas avanzadas de las tareas con análisis predictivo',
     parameters: z.object({
       period: z.enum(['today', 'week', 'month', 'year', 'all-time']).optional().describe('Período de tiempo'),
+      includeAdvanced: z.boolean().optional().describe('Incluir estadísticas avanzadas (tendencias, predicciones)'),
     }),
-    execute: async ({ period }: any) => {
+    execute: async ({ period, includeAdvanced }: any) => {
       const now = new Date();
       let dateFilter: Date | undefined;
 
@@ -308,11 +382,15 @@ function createTools(userId: string) {
         where.createdAt = { gte: dateFilter };
       }
 
-      const allTasks = await prisma.task.findMany({ where });
+      const allTasks = await prisma.task.findMany({ 
+        where,
+        orderBy: { createdAt: 'asc' }
+      });
 
       const completedTasks = allTasks.filter((t) => t.completed);
       const pendingTasks = allTasks.filter((t) => !t.completed);
 
+      // Estadísticas básicas por prioridad
       const byPriority = {
         high: {
           total: allTasks.filter((t) => t.priority === 'high').length,
@@ -328,15 +406,86 @@ function createTools(userId: string) {
         },
       };
 
+      // Estadísticas por categoría
+      const categories = [...new Set(allTasks.map(t => t.category).filter(Boolean))];
+      const byCategory: any = {};
+      
+      for (const cat of categories) {
+        const catTasks = allTasks.filter(t => t.category === cat);
+        const catCompleted = catTasks.filter(t => t.completed);
+        byCategory[cat!] = {
+          total: catTasks.length,
+          completed: catCompleted.length,
+          completionRate: catTasks.length > 0 ? (catCompleted.length / catTasks.length) * 100 : 0
+        };
+      }
+
+      const stats: any = {
+        totalTasks: allTasks.length,
+        completedTasks: completedTasks.length,
+        pendingTasks: pendingTasks.length,
+        completionRate: allTasks.length > 0 ? (completedTasks.length / allTasks.length) * 100 : 0,
+        byPriority,
+        byCategory,
+      };
+
+      // Estadísticas avanzadas
+      if (includeAdvanced) {
+        // 1. Tendencia de productividad (basado en fecha de completitud)
+        const last7Completed = completedTasks.filter(t => {
+          if (!t.completedAt) return false;
+          const diff = now.getTime() - new Date(t.completedAt).getTime();
+          return diff <= 7 * 24 * 60 * 60 * 1000;
+        }).length;
+        
+        const prev7Completed = completedTasks.filter(t => {
+          if (!t.completedAt) return false;
+          const diff = now.getTime() - new Date(t.completedAt).getTime();
+          return diff > 7 * 24 * 60 * 60 * 1000 && diff <= 14 * 24 * 60 * 60 * 1000;
+        }).length;
+        
+        stats.productivityTrend = {
+          current: last7Completed,
+          previous: prev7Completed,
+          change: last7Completed - prev7Completed,
+          status: last7Completed > prev7Completed ? 'mejorando' : 
+                  last7Completed < prev7Completed ? 'empeorando' : 'estable'
+        };
+
+        // 2. Categorías descuidadas (menos del 50% completitud y tienen tareas)
+        const neglectedCategories = Object.entries(byCategory)
+          .filter(([_, data]: any) => data.total > 0 && data.completionRate < 50)
+          .map(([cat, data]: any) => ({ 
+            category: cat, 
+            completionRate: data.completionRate,
+            pending: data.total - data.completed 
+          }));
+
+        stats.neglectedCategories = neglectedCategories;
+
+        // 3. Predicción de finalización
+        const tasksWithDuration = completedTasks.filter(t => t.completedAt && t.createdAt);
+        if (tasksWithDuration.length > 0) {
+          const avgDuration = tasksWithDuration.reduce((sum, t) => {
+            const duration = new Date(t.completedAt!).getTime() - new Date(t.createdAt).getTime();
+            return sum + duration;
+          }, 0) / tasksWithDuration.length;
+
+          const avgDays = Math.round(avgDuration / (24 * 60 * 60 * 1000));
+          
+          stats.predictions = {
+            averageCompletionTime: `${avgDays} días`,
+            estimatedCompletionDate: pendingTasks.length > 0 
+              ? new Date(now.getTime() + (avgDuration * pendingTasks.length)).toISOString()
+              : null,
+            pendingTasksCount: pendingTasks.length
+          };
+        }
+      }
+
       return {
         success: true,
-        stats: {
-          totalTasks: allTasks.length,
-          completedTasks: completedTasks.length,
-          pendingTasks: pendingTasks.length,
-          completionRate: allTasks.length > 0 ? (completedTasks.length / allTasks.length) * 100 : 0,
-          byPriority,
-        },
+        stats,
         message: `Estadísticas del período: ${period || 'todos los tiempos'}`,
       };
     },
@@ -364,30 +513,44 @@ export async function POST(request: NextRequest) {
     const toolFunctions = createTools(user.id);
 
     // Crear el prompt del sistema
-    const systemPrompt = `Eres un asistente de gestión de tareas inteligente. Ayudas a los usuarios a organizar, crear, actualizar y gestionar sus tareas.
+    const systemPrompt = `Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes el lenguaje natural y ayudas a crear tareas de forma automática.
 
-Tienes acceso a 7 herramientas para gestionar tareas:
-1. createTask - Crear nuevas tareas. Detecta automáticamente la categoría:
-   - "estudios" para académicas (estudiar, examen, universidad)
-   - "trabajo" para laborales (reunión, proyecto, oficina)
-   - "compras" para compras (comprar, supermercado)
-   - "personal" para personales (ejercicio, llamar)
-   - "hogar" para del hogar (limpiar, cocinar)
+🎯 COMPORTAMIENTO PRINCIPAL:
+- Cuando el usuario dice "tengo que X", "necesito X", "debo X" → Crea tareas automáticamente
+- Identifica múltiples tareas en un solo mensaje (usa "y", "también", comas)
+- Responde de forma natural y amigable
+- SIEMPRE responde algo, nunca quedes en silencio
 
-2. editTaskByTitle - USAR SIEMPRE para editar tareas cuando el usuario menciona el nombre/título
-3. deleteTaskByTitle - USAR SIEMPRE para eliminar tareas cuando el usuario menciona el nombre/título
-
+📋 HERRAMIENTAS DISPONIBLES:
+1. createTask - Crear tareas nuevas
+2. editTaskByTitle - Editar tareas por nombre
+3. deleteTaskByTitle - Eliminar tareas por nombre
 4. searchTasks - Buscar y listar tareas
-5. getTaskStats - Obtener estadísticas
-6. updateTask - Solo si tienes el ID exacto (raro)
-7. deleteTask - Solo si tienes el ID exacto (raro)
+5. getTaskStats - Ver estadísticas (usa includeAdvanced: true)
+6. updateTask - Actualizar por ID
+7. deleteTask - Eliminar por ID
 
-REGLAS:
-- Para EDITAR: Usa editTaskByTitle con el título que menciona el usuario
-- Para ELIMINAR: Usa deleteTaskByTitle con el título que menciona el usuario
-- Cuando listes tareas, incluye TODAS las encontradas
+✅ CATEGORÍAS (NUNCA uses "other"):
+- "estudios" → académico, universidad, examen, estudiar
+- "trabajo" → laboral, reunión, proyecto
+- "compras" → supermercado, comprar, tienda
+- "salud" → médico, ejercicio, gym
+- "hogar" → limpiar, barrer, cocinar, ordenar, vereda
+- "finanzas" → pagar, banco, factura
+- "social" → cumpleaños, amigos, eventos
+- "personal" → viaje, valija, hobby, desarrollo
 
-Sé conciso y amigable. Confirma las acciones realizadas.`;
+📅 FECHAS NATURALES:
+- "mañana" → usa dueDate con fecha ISO de mañana
+- "próxima semana" → +7 días
+- "en X días" → +X días
+
+🚨 REGLAS CRÍTICAS:
+- Identifica tareas de contexto: "barrer la vereda" = tarea hogar
+- "comprar ropa" = tarea compras
+- "hacer la valija" = tarea personal
+- SIEMPRE confirma las tareas creadas con detalles
+- Si piden estadísticas, usa getTaskStats con includeAdvanced: true`;
 
     // Definir las tools en formato Groq/OpenAI
     const groqTools: Groq.Chat.ChatCompletionTool[] = [
@@ -511,7 +674,7 @@ Sé conciso y amigable. Confirma las acciones realizadas.`;
         type: 'function',
         function: {
           name: 'getTaskStats',
-          description: 'Obtener estadísticas de las tareas',
+          description: 'Obtener estadísticas avanzadas de las tareas con análisis predictivo',
           parameters: {
             type: 'object',
             properties: {
@@ -519,6 +682,10 @@ Sé conciso y amigable. Confirma las acciones realizadas.`;
                 type: 'string', 
                 enum: ['today', 'week', 'month', 'year', 'all-time'],
                 description: 'Período de tiempo' 
+              },
+              includeAdvanced: { 
+                type: 'boolean', 
+                description: 'Incluir análisis avanzados (tendencias, predicciones, categorías descuidadas)' 
               },
             },
           },
@@ -611,8 +778,15 @@ Sé conciso y amigable. Confirma las acciones realizadas.`;
     }
 
     // Si no hay tool calls, devolver la respuesta directa
+    let directContent = assistantMessage.content;
+    
+    // Si el contenido es null o vacío, generar respuesta por defecto
+    if (!directContent || directContent.trim() === '') {
+      directContent = '¡Claro! ¿En qué más puedo ayudarte?';
+    }
+    
     return NextResponse.json({
-      message: assistantMessage.content || 'Procesado correctamente',
+      message: directContent,
       toolCalls: [],
     });
   } catch (error: any) {
