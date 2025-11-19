@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Logs
 *.log
+
+# Ignorar todos los archivos Markdown
+*.md
