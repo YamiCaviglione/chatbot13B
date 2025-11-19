@@ -69,6 +69,8 @@ export default function ChatPage() {
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [showViews, setShowViews] = useState(false);
+  const [activeView, setActiveView] = useState<'list' | 'calendar' | 'kanban' | 'charts'>('list');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user, isLoading: authLoading, logout } = useAuth();
@@ -312,11 +314,17 @@ export default function ChatPage() {
               </h1>
               <p className="text-sm text-gray-600">Gestiona tus tareas con inteligencia artificial</p>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
               <div className="text-right">
                 <p className="text-xs text-gray-500">Bienvenido,</p>
                 <p className="font-semibold text-gray-800">{user.name}</p>
               </div>
+              <button
+                onClick={() => setShowViews(true)}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
+              >
+                👁️ Vistas
+              </button>
               <button
                 onClick={loadStats}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
@@ -746,6 +754,443 @@ export default function ChatPage() {
                   <div className="text-6xl mb-4">📊</div>
                   <p className="text-lg font-semibold">No hay estadísticas disponibles</p>
                   <p className="text-sm mt-2">Crea algunas tareas para ver tus estadísticas</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Vistas */}
+      {showViews && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowViews(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full max-h-[90vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del modal */}
+            <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold">👁️ Visualizaciones Avanzadas</h2>
+                  <p className="text-sm opacity-90 mt-1">Explora tus tareas de diferentes formas</p>
+                </div>
+                <button
+                  onClick={() => setShowViews(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-all duration-200"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Selector de vistas */}
+            <div className="bg-gray-50 border-b border-gray-200 p-4">
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => setActiveView('calendar')}
+                  className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                    activeView === 'calendar' 
+                      ? 'bg-purple-600 text-white shadow-lg' 
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  📅 Calendario
+                </button>
+                <button
+                  onClick={() => setActiveView('kanban')}
+                  className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                    activeView === 'kanban' 
+                      ? 'bg-purple-600 text-white shadow-lg' 
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  📋 Kanban
+                </button>
+                <button
+                  onClick={() => setActiveView('charts')}
+                  className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                    activeView === 'charts' 
+                      ? 'bg-purple-600 text-white shadow-lg' 
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  📊 Gráficos
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido de las vistas */}
+            <div className="p-6 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 200px)' }}>
+              
+              {/* Vista de Calendario */}
+              {activeView === 'calendar' && (
+                <div className="space-y-4">
+                  <h3 className="text-xl font-bold text-gray-800 mb-4">📅 Vista de Calendario</h3>
+                  
+                  {/* Tareas de hoy */}
+                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200">
+                    <h4 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
+                      <span className="text-2xl">🔵</span> Hoy
+                    </h4>
+                    <div className="space-y-2">
+                      {tasks.filter(t => {
+                        if (!t.dueDate) return false;
+                        const today = new Date();
+                        const taskDate = new Date(t.dueDate);
+                        return taskDate.toDateString() === today.toDateString();
+                      }).map(task => (
+                        <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="checkbox" 
+                              checked={task.completed}
+                              onChange={() => toggleTask(task.id, task.completed)}
+                              className="w-4 h-4"
+                            />
+                            <span className={task.completed ? 'line-through text-gray-500' : 'text-gray-800'}>
+                              {task.title}
+                            </span>
+                            <span className={`ml-auto px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                              {task.priority === 'high' && '🔴'}
+                              {task.priority === 'medium' && '🟡'}
+                              {task.priority === 'low' && '🟢'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {tasks.filter(t => {
+                        if (!t.dueDate) return false;
+                        const today = new Date();
+                        const taskDate = new Date(t.dueDate);
+                        return taskDate.toDateString() === today.toDateString();
+                      }).length === 0 && (
+                        <p className="text-gray-500 text-sm italic">No hay tareas para hoy</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Próximos 7 días */}
+                  <div className="bg-gradient-to-r from-green-50 to-green-100 p-4 rounded-xl border border-green-200">
+                    <h4 className="font-semibold text-green-900 mb-3 flex items-center gap-2">
+                      <span className="text-2xl">🟢</span> Próximos 7 días
+                    </h4>
+                    <div className="space-y-2">
+                      {tasks.filter(t => {
+                        if (!t.dueDate) return false;
+                        const today = new Date();
+                        const taskDate = new Date(t.dueDate);
+                        const diffDays = Math.ceil((taskDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        return diffDays > 0 && diffDays <= 7;
+                      }).map(task => (
+                        <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="checkbox" 
+                              checked={task.completed}
+                              onChange={() => toggleTask(task.id, task.completed)}
+                              className="w-4 h-4"
+                            />
+                            <div className="flex-1">
+                              <span className={task.completed ? 'line-through text-gray-500' : 'text-gray-800'}>
+                                {task.title}
+                              </span>
+                              <span className="block text-xs text-gray-500 mt-1">
+                                {new Date(task.dueDate!).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'short' })}
+                              </span>
+                            </div>
+                            <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                              {task.priority === 'high' && '🔴'}
+                              {task.priority === 'medium' && '🟡'}
+                              {task.priority === 'low' && '🟢'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {tasks.filter(t => {
+                        if (!t.dueDate) return false;
+                        const today = new Date();
+                        const taskDate = new Date(t.dueDate);
+                        const diffDays = Math.ceil((taskDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        return diffDays > 0 && diffDays <= 7;
+                      }).length === 0 && (
+                        <p className="text-gray-500 text-sm italic">No hay tareas próximas</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tareas vencidas */}
+                  {tasks.filter(t => {
+                    if (!t.dueDate || t.completed) return false;
+                    const today = new Date();
+                    const taskDate = new Date(t.dueDate);
+                    return taskDate < today;
+                  }).length > 0 && (
+                    <div className="bg-gradient-to-r from-red-50 to-red-100 p-4 rounded-xl border border-red-200">
+                      <h4 className="font-semibold text-red-900 mb-3 flex items-center gap-2">
+                        <span className="text-2xl">🔴</span> Vencidas
+                      </h4>
+                      <div className="space-y-2">
+                        {tasks.filter(t => {
+                          if (!t.dueDate || t.completed) return false;
+                          const today = new Date();
+                          const taskDate = new Date(t.dueDate);
+                          return taskDate < today;
+                        }).map(task => (
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border-l-4 border-red-500">
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="checkbox" 
+                                checked={task.completed}
+                                onChange={() => toggleTask(task.id, task.completed)}
+                                className="w-4 h-4"
+                              />
+                              <div className="flex-1">
+                                <span className="text-gray-800 font-medium">{task.title}</span>
+                                <span className="block text-xs text-red-600 mt-1">
+                                  Venció: {new Date(task.dueDate!).toLocaleDateString('es-AR')}
+                                </span>
+                              </div>
+                              <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                                {task.priority === 'high' && '🔴'}
+                                {task.priority === 'medium' && '🟡'}
+                                {task.priority === 'low' && '🟢'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Vista Kanban */}
+              {activeView === 'kanban' && (
+                <div>
+                  <h3 className="text-xl font-bold text-gray-800 mb-4">📋 Tablero Kanban</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    
+                    {/* To Do */}
+                    <div className="bg-gray-50 rounded-xl p-4 border-2 border-gray-200">
+                      <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                        To Do ({tasks.filter(t => !t.completed).length})
+                      </h4>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {tasks.filter(t => !t.completed).map(task => (
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+                            <div className="flex items-start gap-2">
+                              <input 
+                                type="checkbox" 
+                                checked={false}
+                                onChange={() => toggleTask(task.id, task.completed)}
+                                className="mt-1 w-4 h-4"
+                              />
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-800">{task.title}</p>
+                                <div className="flex gap-1 mt-2">
+                                  <span className={`px-2 py-0.5 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                                    {task.priority}
+                                  </span>
+                                  {task.category && (
+                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                      {task.category}
+                                    </span>
+                                  )}
+                                </div>
+                                {task.dueDate && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    📅 {new Date(task.dueDate).toLocaleDateString('es-AR')}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* In Progress (simulado - tareas con alta prioridad) */}
+                    <div className="bg-yellow-50 rounded-xl p-4 border-2 border-yellow-300">
+                      <h4 className="font-semibold text-yellow-700 mb-3 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-yellow-500 rounded-full"></span>
+                        In Progress ({tasks.filter(t => !t.completed && t.priority === 'high').length})
+                      </h4>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {tasks.filter(t => !t.completed && t.priority === 'high').map(task => (
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-yellow-200 hover:shadow-md transition-shadow">
+                            <div className="flex items-start gap-2">
+                              <input 
+                                type="checkbox" 
+                                checked={false}
+                                onChange={() => toggleTask(task.id, task.completed)}
+                                className="mt-1 w-4 h-4"
+                              />
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-800">{task.title}</p>
+                                <div className="flex gap-1 mt-2">
+                                  <span className={`px-2 py-0.5 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                                    {task.priority}
+                                  </span>
+                                  {task.category && (
+                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                      {task.category}
+                                    </span>
+                                  )}
+                                </div>
+                                {task.dueDate && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    📅 {new Date(task.dueDate).toLocaleDateString('es-AR')}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Done */}
+                    <div className="bg-green-50 rounded-xl p-4 border-2 border-green-300">
+                      <h4 className="font-semibold text-green-700 mb-3 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-green-500 rounded-full"></span>
+                        Done ({tasks.filter(t => t.completed).length})
+                      </h4>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {tasks.filter(t => t.completed).map(task => (
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-green-200 hover:shadow-md transition-shadow opacity-75">
+                            <div className="flex items-start gap-2">
+                              <input 
+                                type="checkbox" 
+                                checked={true}
+                                onChange={() => toggleTask(task.id, task.completed)}
+                                className="mt-1 w-4 h-4"
+                              />
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-500 line-through">{task.title}</p>
+                                <div className="flex gap-1 mt-2">
+                                  <span className={`px-2 py-0.5 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                                    {task.priority}
+                                  </span>
+                                  {task.category && (
+                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                      {task.category}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Vista de Gráficos */}
+              {activeView === 'charts' && stats && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-bold text-gray-800 mb-4">📊 Gráficos de Productividad</h3>
+                  
+                  {/* Gráfico de Completitud */}
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
+                    <h4 className="font-semibold text-blue-900 mb-4">Tasa de Completitud General</h4>
+                    <div className="relative">
+                      <div className="h-8 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-1000 flex items-center justify-end pr-3"
+                          style={{ width: `${stats.completionRate}%` }}
+                        >
+                          <span className="text-white font-bold text-sm">{stats.completionRate.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex justify-between text-sm text-gray-600">
+                        <span>{stats.completedTasks} completadas</span>
+                        <span>{stats.pendingTasks} pendientes</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gráfico por Categorías */}
+                  {stats.byCategory && Object.keys(stats.byCategory).length > 0 && (
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
+                      <h4 className="font-semibold text-purple-900 mb-4">Completitud por Categoría</h4>
+                      <div className="space-y-3">
+                        {Object.entries(stats.byCategory).map(([cat, data]: any) => (
+                          <div key={cat}>
+                            <div className="flex justify-between mb-1">
+                              <span className="capitalize text-sm font-medium text-gray-700">{cat}</span>
+                              <span className="text-sm text-gray-600">{data.completionRate.toFixed(0)}%</span>
+                            </div>
+                            <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-1000 flex items-center justify-end pr-2"
+                                style={{ width: `${data.completionRate}%` }}
+                              >
+                                {data.completionRate > 15 && (
+                                  <span className="text-white font-bold text-xs">{data.completed}/{data.total}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tendencia Visual */}
+                  {stats.productivityTrend && (
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
+                      <h4 className="font-semibold text-green-900 mb-4">Tendencia de Productividad (últimas 2 semanas)</h4>
+                      <div className="flex items-end justify-around h-40 gap-4">
+                        <div className="flex-1 flex flex-col items-center">
+                          <div className="w-full bg-gradient-to-t from-gray-400 to-gray-500 rounded-t-lg" 
+                               style={{ height: `${(stats.productivityTrend.previous / Math.max(stats.productivityTrend.previous, stats.productivityTrend.current, 1)) * 100}%` }}>
+                          </div>
+                          <p className="text-sm font-semibold text-gray-700 mt-2">Semana Anterior</p>
+                          <p className="text-2xl font-bold text-gray-600">{stats.productivityTrend.previous}</p>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center">
+                          <div className="w-full bg-gradient-to-t from-green-500 to-green-600 rounded-t-lg" 
+                               style={{ height: `${(stats.productivityTrend.current / Math.max(stats.productivityTrend.previous, stats.productivityTrend.current, 1)) * 100}%` }}>
+                          </div>
+                          <p className="text-sm font-semibold text-green-700 mt-2">Última Semana</p>
+                          <p className="text-2xl font-bold text-green-600">{stats.productivityTrend.current}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 text-center">
+                        <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold ${
+                          stats.productivityTrend.status === 'mejorando' ? 'bg-green-200 text-green-800' :
+                          stats.productivityTrend.status === 'empeorando' ? 'bg-red-200 text-red-800' :
+                          'bg-gray-200 text-gray-800'
+                        }`}>
+                          {stats.productivityTrend.status === 'mejorando' && '↗️ Mejorando'}
+                          {stats.productivityTrend.status === 'empeorando' && '↘️ Empeorando'}
+                          {stats.productivityTrend.status === 'estable' && '→ Estable'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeView === 'charts' && !stats && (
+                <div className="text-center text-gray-500 py-12">
+                  <div className="text-6xl mb-4">📊</div>
+                  <p className="text-lg font-semibold">Cargando estadísticas...</p>
+                  <button 
+                    onClick={loadStats}
+                    className="mt-4 px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                  >
+                    Cargar Gráficos
+                  </button>
                 </div>
               )}
             </div>

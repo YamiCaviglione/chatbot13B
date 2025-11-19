@@ -100,11 +100,25 @@ function parseNaturalDate(dateStr: string): string | null {
     // Si es año corto (25 → 2025)
     if (year < 100) year += 2000;
     
-    // Si la fecha ya pasó este año, usar el próximo año
-    const targetDate = new Date(year, month, day, 23, 59, 59, 999);
-    if (targetDate < now && !dateMatch[3]) {
-      targetDate.setFullYear(year + 1);
+    // Crear la fecha al final del día
+    let targetDate = new Date(year, month, day, 23, 59, 59, 999);
+    
+    // Si no se especificó año y la fecha ya pasó este año, usar el próximo año
+    if (!dateMatch[3]) {
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const targetDay = new Date(year, month, day);
+      
+      if (targetDay < today) {
+        targetDate.setFullYear(year + 1);
+      }
     }
+    
+    console.log('DEBUG FECHA DD/MM:', {
+      input: dateStr,
+      day, month: month + 1, year,
+      parsed: targetDate.toISOString(),
+      formattedDate: targetDate.toLocaleDateString('es-AR')
+    });
     
     return targetDate.toISOString();
   }
@@ -142,22 +156,14 @@ function createTools(userId: string) {
       if (dueDate) {
         parsedDueDate = parseNaturalDate(dueDate);
         
-        // Validar que la fecha no sea anterior a hoy (solo comparar fechas, no horas)
-        if (parsedDueDate) {
-          const dueDateObj = new Date(parsedDueDate);
-          const now = new Date();
-          
-          // Normalizar ambas fechas a medianoche para comparar solo días
-          const dueDateDay = new Date(dueDateObj.getFullYear(), dueDateObj.getMonth(), dueDateObj.getDate());
-          const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          
-          if (dueDateDay < todayDay) {
-            return {
-              success: false,
-              error: 'La fecha límite no puede ser anterior a la fecha actual',
-            };
-          }
-        }
+        console.log('DEBUG createTask:', {
+          originalDueDate: dueDate,
+          parsedDueDate,
+          parsedReadable: parsedDueDate ? new Date(parsedDueDate).toLocaleString('es-AR') : 'null'
+        });
+        
+        // NO validar fechas pasadas - el parseNaturalDate ya maneja esto correctamente
+        // Si la función devolvió una fecha, es válida
       }
       
       // Asegurar que siempre haya una categoría (nunca 'other')
