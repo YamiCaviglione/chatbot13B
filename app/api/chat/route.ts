@@ -14,13 +14,14 @@ const tools = {
       dueDate: z.string().optional().describe('Fecha límite en formato ISO'),
       category: z.string().optional().describe('Categoría de la tarea'),
     }),
-    execute: async ({ title, priority, dueDate, category }: any) => {
+    execute: async ({ title, priority, dueDate, category }: any, userId: string) => {
       const task = await prisma.task.create({
         data: {
           title,
-          priority: priority || 'medium',
+          priority: (priority as "low" | "medium" | "high") || 'medium',
           dueDate: dueDate ? new Date(dueDate) : null,
           category,
+          userId,
         },
       });
       return {
@@ -41,7 +42,7 @@ const tools = {
       dueDate: z.string().optional().describe('Nueva fecha límite'),
       category: z.string().optional().describe('Nueva categoría'),
     }),
-    execute: async ({ taskId, title, completed, priority, dueDate, category }: any) => {
+    execute: async ({ taskId, title, completed, priority, dueDate, category }: any, userId: string) => {
       const updateData: any = {};
       if (title !== undefined) updateData.title = title;
       if (completed !== undefined) {
@@ -53,6 +54,14 @@ const tools = {
       if (priority !== undefined) updateData.priority = priority;
       if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
       if (category !== undefined) updateData.category = category;
+
+      // Verificar que la tarea existe y pertenece al usuario
+      const existingTask = await prisma.task.findFirst({
+        where: { id: taskId, userId: userId },
+      });
+      if (!existingTask) {
+        return { error: 'Tarea no encontrada' };
+      }
 
       const task = await prisma.task.update({
         where: { id: taskId },
@@ -72,7 +81,14 @@ const tools = {
     parameters: z.object({
       taskId: z.string().describe('ID de la tarea a eliminar'),
     }),
-    execute: async ({ taskId }: any) => {
+    execute: async ({ taskId }: any, userId: string) => {
+      // Verificar que la tarea pertenece al usuario
+      const existingTask = await prisma.task.findFirst({
+        where: { id: taskId, userId },
+      });
+      if (!existingTask) {
+        return { error: 'Tarea no encontrada' };
+      }
       const task = await prisma.task.delete({
         where: { id: taskId },
       });
@@ -93,8 +109,10 @@ const tools = {
       category: z.string().optional().describe('Filtrar por categoría'),
       limit: z.number().optional().describe('Número máximo de resultados'),
     }),
-    execute: async ({ query, completed, priority, category, limit }: any) => {
-      const where: any = {};
+    execute: async ({ query, completed, priority, category, limit }: any, userId: string) => {
+      const where: any = {
+        userId, // Solo tareas del usuario
+      };
 
       if (query) {
         where.title = { contains: query };
@@ -129,7 +147,7 @@ const tools = {
     parameters: z.object({
       period: z.enum(['today', 'week', 'month', 'year', 'all-time']).optional().describe('Período de tiempo'),
     }),
-    execute: async ({ period }: any) => {
+    execute: async ({ period }: any, userId: string) => {
       const now = new Date();
       let dateFilter: Date | undefined;
 
@@ -143,9 +161,12 @@ const tools = {
         dateFilter = new Date(now.setFullYear(now.getFullYear() - 1));
       }
 
-      const allTasks = await prisma.task.findMany({
-        where: dateFilter ? { createdAt: { gte: dateFilter } } : {},
-      });
+      const where: any = { userId };
+      if (dateFilter) {
+        where.createdAt = { gte: dateFilter };
+      }
+
+      const allTasks = await prisma.task.findMany({ where });
 
       const completedTasks = allTasks.filter((t) => t.completed);
       const pendingTasks = allTasks.filter((t) => !t.completed);
@@ -182,7 +203,42 @@ const tools = {
 
 export async function POST(request: NextRequest) {
   try {
+    // Verificar autenticación
+    const { getCurrentUser } = await import('@/lib/auth');
+    const user = await getCurrentUser(request);
+    
+    if (!user) {
+      return NextResponse.json(
+        { error: 'No autenticado. Por favor inicia sesión.' },
+        { status: 401 }
+      );
+    }
+
     const { messages } = await request.json();
+
+    // Crear tools con el userId del usuario autenticado
+    const userTools = {
+      createTask: {
+        ...tools.createTask,
+        execute: (params: any) => tools.createTask.execute(params, user.id),
+      },
+      updateTask: {
+        ...tools.updateTask,
+        execute: (params: any) => tools.updateTask.execute(params, user.id),
+      },
+      deleteTask: {
+        ...tools.deleteTask,
+        execute: (params: any) => tools.deleteTask.execute(params, user.id),
+      },
+      searchTasks: {
+        ...tools.searchTasks,
+        execute: (params: any) => tools.searchTasks.execute(params, user.id),
+      },
+      getTaskStats: {
+        ...tools.getTaskStats,
+        execute: (params: any) => tools.getTaskStats.execute(params, user.id),
+      },
+    };
 
     // Configurar el modelo de OpenRouter
     const model = openrouter('anthropic/claude-3.5-sonnet');
@@ -208,7 +264,7 @@ Sé conciso pero amigable en tus respuestas. Confirma las acciones realizadas.`;
         role: m.role,
         content: m.content,
       })),
-      tools: tools as any,
+      tools: userTools as any,
     });
 
     // Extraer el texto de la respuesta

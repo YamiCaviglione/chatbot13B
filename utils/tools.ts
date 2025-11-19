@@ -13,13 +13,15 @@ export const tools = {
     priority?: string;
     dueDate?: string;
     category?: string;
+    userId: string;
   }) {
     const task = await prisma.task.create({
       data: {
         title: args.title,
-        priority: args.priority || "medium",
+        priority: (args.priority as "low" | "medium" | "high") || "medium",
         dueDate: args.dueDate ? new Date(args.dueDate) : null,
         category: args.category || "other",
+        userId: args.userId,
       },
     });
     return { message: `Tarea creada: ${task.title}`, task };
@@ -58,10 +60,17 @@ export const tools = {
   /**
    * Elimina una tarea del sistema (soft delete)
    */
-  async deleteTask(args: { id: string }) {
-    const deleted = await prisma.task.update({
+  async deleteTask(args: { id: string; userId: string }) {
+    // Verificar que pertenece al usuario
+    const existingTask = await prisma.task.findFirst({
+      where: { id: args.id, userId: args.userId },
+    });
+    if (!existingTask) {
+      return { message: "Tarea no encontrada", task: null };
+    }
+
+    const deleted = await prisma.task.delete({
       where: { id: args.id },
-      data: { deleted: true },
     });
     return {
       message: `Tarea eliminada: ${deleted.title}`,
@@ -77,9 +86,13 @@ export const tools = {
     completed?: boolean;
     priority?: string;
     category?: string;
+    userId?: string;
   }) {
     // Construir filtros dinamicamente
-    const where: Record<string, any> = { deleted: false };
+    const where: Record<string, any> = {};
+    if (args?.userId) {
+      where.userId = args.userId;
+    }
     
     if (args?.query) {
       where.title = { contains: args.query, mode: "insensitive" };
@@ -108,8 +121,12 @@ export const tools = {
   /**
    * Obtiene estadisticas de productividad del usuario
    */
-  async getTaskStats() {
-    const tasks = await prisma.task.findMany({ where: { deleted: false } });
+  async getTaskStats(args?: { userId?: string }) {
+    const where: Record<string, any> = {};
+    if (args?.userId) {
+      where.userId = args.userId;
+    }
+    const tasks = await prisma.task.findMany({ where });
     
     const total = tasks.length;
     const completed = tasks.filter((t) => t.completed).length;

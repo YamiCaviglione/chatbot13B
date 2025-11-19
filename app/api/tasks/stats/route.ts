@@ -1,15 +1,25 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 /**
  * GET /api/tasks/stats
  * Obtiene estadisticas completas y detalladas de las tareas del usuario
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    // Obtener todas las tareas activas (no eliminadas)
+    // Verificar autenticación
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
+    // Obtener todas las tareas del usuario
     const tasks = await prisma.task.findMany({
-      where: { deleted: false },
+      where: { userId: user.id },
       orderBy: { createdAt: "desc" },
     });
 

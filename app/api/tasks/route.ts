@@ -1,14 +1,29 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createTaskSchema, updateTaskSchema, searchTaskSchema } from "@/lib/validators/taskSchema";
+import { getCurrentUser } from "@/lib/auth";
 
 // CREATE TASK
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
+    // Verificar autenticación
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
     const parsed = createTaskSchema.parse(body);
 
-    const task = await prisma.task.create({ data: parsed });
+    const task = await prisma.task.create({ 
+      data: {
+        ...parsed,
+        userId: user.id,
+      }
+    });
     return NextResponse.json(task, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
@@ -16,20 +31,29 @@ export async function POST(req: Request) {
 }
 
 // READ / SEARCH TASKS
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
+    // Verificar autenticación
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const filters = Object.fromEntries(searchParams.entries());
     const parsed = searchTaskSchema.parse(filters);
 
     const tasks = await prisma.task.findMany({
       where: {
-        deleted: false,
+        userId: user.id,
         ...(parsed.query && {
           title: { contains: parsed.query },
         }),
         ...(parsed.completed !== undefined && { completed: parsed.completed }),
-        ...(parsed.priority && { priority: parsed.priority }),
+        ...(parsed.priority && { priority: parsed.priority as "low" | "medium" | "high" }),
         ...(parsed.category && { category: parsed.category }),
       },
       orderBy: parsed.sortBy
@@ -45,10 +69,34 @@ export async function GET(req: Request) {
 }
 
 // UPDATE TASK
-export async function PUT(req: Request) {
+export async function PUT(req: NextRequest) {
   try {
+    // Verificar autenticación
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
     const parsed = updateTaskSchema.parse(body);
+
+    // Verificar que la tarea pertenece al usuario
+    const existingTask = await prisma.task.findFirst({
+      where: {
+        id: parsed.id,
+        userId: user.id,
+      },
+    });
+
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: "Tarea no encontrada" },
+        { status: 404 }
+      );
+    }
 
     const updated = await prisma.task.update({
       where: { id: parsed.id },
@@ -68,15 +116,39 @@ export async function PUT(req: Request) {
 }
 
 // DELETE TASK
-export async function DELETE(req: Request) {
+export async function DELETE(req: NextRequest) {
   try {
+    // Verificar autenticación
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
     if (!id) throw new Error("Falta el ID de la tarea");
 
-    const deleted = await prisma.task.update({
+    // Verificar que la tarea pertenece al usuario
+    const existingTask = await prisma.task.findFirst({
+      where: {
+        id,
+        userId: user.id,
+      },
+    });
+
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: "Tarea no encontrada" },
+        { status: 404 }
+      );
+    }
+
+    // Eliminar permanentemente
+    const deleted = await prisma.task.delete({
       where: { id },
-      data: { deleted: true },
     });
 
     return NextResponse.json({
