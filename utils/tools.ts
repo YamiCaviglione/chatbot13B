@@ -13,7 +13,6 @@ export const tools = {
     priority?: string;
     dueDate?: string;
     category?: string;
-    userId: string;
   }) {
     const task = await prisma.task.create({
       data: {
@@ -21,7 +20,7 @@ export const tools = {
         priority: (args.priority as "low" | "medium" | "high") || "medium",
         dueDate: args.dueDate ? new Date(args.dueDate) : null,
         category: args.category || "other",
-        userId: args.userId,
+        userId: "default-user-id",
       },
     });
     return { message: `Tarea creada: ${task.title}`, task };
@@ -38,11 +37,10 @@ export const tools = {
     dueDate?: string;
     category?: string;
   }) {
-    // Construir objeto de actualizacion solo con campos definidos
     const updateData: Record<string, any> = {};
     if (args.title !== undefined) updateData.title = args.title;
     if (args.completed !== undefined) updateData.completed = args.completed;
-    if (args.priority !== undefined) updateData.priority = args.priority;
+    if (args.priority !== undefined) updateData.priority = args.priority as "low" | "medium" | "high";
     if (args.dueDate !== undefined) updateData.dueDate = new Date(args.dueDate);
     if (args.category !== undefined) updateData.category = args.category;
 
@@ -58,17 +56,9 @@ export const tools = {
   },
 
   /**
-   * Elimina una tarea del sistema (soft delete)
+   * Elimina una tarea del sistema
    */
-  async deleteTask(args: { id: string; userId: string }) {
-    // Verificar que pertenece al usuario
-    const existingTask = await prisma.task.findFirst({
-      where: { id: args.id, userId: args.userId },
-    });
-    if (!existingTask) {
-      return { message: "Tarea no encontrada", task: null };
-    }
-
+  async deleteTask(args: { id: string }) {
     const deleted = await prisma.task.delete({
       where: { id: args.id },
     });
@@ -86,22 +76,17 @@ export const tools = {
     completed?: boolean;
     priority?: string;
     category?: string;
-    userId?: string;
   }) {
-    // Construir filtros dinamicamente
     const where: Record<string, any> = {};
-    if (args?.userId) {
-      where.userId = args.userId;
-    }
     
     if (args?.query) {
-      where.title = { contains: args.query, mode: "insensitive" };
+      where.title = { contains: args.query };
     }
     if (args?.completed !== undefined) {
       where.completed = args.completed;
     }
     if (args?.priority) {
-      where.priority = args.priority;
+      where.priority = args.priority as "low" | "medium" | "high";
     }
     if (args?.category) {
       where.category = args.category;
@@ -121,26 +106,20 @@ export const tools = {
   /**
    * Obtiene estadisticas de productividad del usuario
    */
-  async getTaskStats(args?: { userId?: string }) {
-    const where: Record<string, any> = {};
-    if (args?.userId) {
-      where.userId = args.userId;
-    }
-    const tasks = await prisma.task.findMany({ where });
+  async getTaskStats() {
+    const tasks = await prisma.task.findMany();
     
     const total = tasks.length;
     const completed = tasks.filter((t) => t.completed).length;
     const pending = total - completed;
     const completionRate = total > 0 ? (completed / total) * 100 : 0;
     
-    // Estadisticas por prioridad
     const byPriority = {
       high: tasks.filter((t) => t.priority === "high").length,
       medium: tasks.filter((t) => t.priority === "medium").length,
       low: tasks.filter((t) => t.priority === "low").length,
     };
     
-    // Estadisticas por categoria
     const byCategory = {
       work: tasks.filter((t) => t.category === "work").length,
       personal: tasks.filter((t) => t.category === "personal").length,

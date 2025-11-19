@@ -18,11 +18,11 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = createTaskSchema.parse(body);
 
-    const task = await prisma.task.create({ 
+    const task = await prisma.task.create({
       data: {
         ...parsed,
         userId: user.id,
-      }
+      },
     });
     return NextResponse.json(task, { status: 201 });
   } catch (error: any) {
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
       take: parsed.limit || 50,
     });
 
-    return NextResponse.json(tasks);
+    return NextResponse.json({ tasks });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
@@ -152,7 +152,7 @@ export async function DELETE(req: NextRequest) {
     });
 
     return NextResponse.json({
-      message: `Tarea "${deleted.title}" marcada como eliminada`,
+      message: `Tarea "${deleted.title}" eliminada exitosamente`,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
