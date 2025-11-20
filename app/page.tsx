@@ -19,6 +19,7 @@ interface Task {
   id: string;
   title: string;
   completed: boolean;
+  status: 'pending' | 'inProgress' | 'completed';
   priority: 'low' | 'medium' | 'high';
   category?: string;
   dueDate?: string;
@@ -84,6 +85,9 @@ export default function ChatPage() {
   const [activeView, setActiveView] = useState<'list' | 'calendar' | 'kanban' | 'charts'>('list');
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [newSubtaskTitle, setNewSubtaskTitle] = useState<{ [taskId: string]: string }>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [tasksPerPage] = useState(10);
+  const [calendarDate, setCalendarDate] = useState(new Date());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user, isLoading: authLoading, logout } = useAuth();
@@ -152,6 +156,27 @@ export default function ChatPage() {
       setTasks(prev => prev.map(t => 
         t.id === taskId ? { ...t, completed: completed } : t
       ));
+    }
+  };
+
+  // Función para cambiar el estado de una tarea
+  const changeTaskStatus = async (taskId: string, newStatus: 'pending' | 'inProgress' | 'completed') => {
+    try {
+      const response = await fetch('/api/tasks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ 
+          id: taskId, 
+          status: newStatus,
+          completed: newStatus === 'completed'
+        }),
+      });
+      if (response.ok) {
+        loadTasks();
+      }
+    } catch (error) {
+      console.error('Error al actualizar estado:', error);
     }
   };
 
@@ -559,7 +584,11 @@ export default function ChatPage() {
                     <p className="text-xs mt-1">Pídele a la IA que cree una</p>
                   </div>
                 ) : (
-                  tasks.map((task) => {
+                  (() => {
+                    const indexOfLastTask = currentPage * tasksPerPage;
+                    const indexOfFirstTask = indexOfLastTask - tasksPerPage;
+                    const currentTasks = tasks.slice(indexOfFirstTask, indexOfLastTask);
+                    return currentTasks.map((task) => {
                     const progress = getSubtaskProgress(task);
                     const isExpanded = expandedTasks.has(task.id);
                     
@@ -613,7 +642,22 @@ export default function ChatPage() {
                               )}
 
                               <div className="mt-2 space-y-1">
-                                <div className="flex flex-wrap gap-1">
+                                <div className="flex flex-wrap gap-1 items-center">
+                                  {/* Selector de estado */}
+                                  <select
+                                    value={task.status}
+                                    onChange={(e) => changeTaskStatus(task.id, e.target.value as 'pending' | 'inProgress' | 'completed')}
+                                    className={`px-2 py-0.5 rounded-full text-xs font-medium border-0 cursor-pointer ${
+                                      task.status === 'completed' ? 'bg-cyan-100 text-cyan-800' :
+                                      task.status === 'inProgress' ? 'bg-indigo-100 text-indigo-800' :
+                                      'bg-gray-100 text-gray-800'
+                                    }`}
+                                  >
+                                    <option value="pending">⏳ Pendiente</option>
+                                    <option value="inProgress">🔄 En proceso</option>
+                                    <option value="completed">✅ Completada</option>
+                                  </select>
+                                  
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
                                     {task.priority === 'high' && '🔴 Alta'}
                                     {task.priority === 'medium' && '🟡 Media'}
@@ -700,9 +744,35 @@ export default function ChatPage() {
                         )}
                       </div>
                     );
-                  })
+                    });
+                  })()
                 )}
               </div>
+
+              {/* Paginación */}
+              {tasks.length > tasksPerPage && (
+                <div className="border-t border-gray-200 bg-white p-3">
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ← Anterior
+                    </button>
+                    <span className="text-xs text-gray-600">
+                      Página {currentPage} de {Math.ceil(tasks.length / tasksPerPage)}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(tasks.length / tasksPerPage)))}
+                      disabled={currentPage >= Math.ceil(tasks.length / tasksPerPage)}
+                      className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Siguiente →
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Footer */}
               {tasks.length > 0 && (
@@ -996,11 +1066,35 @@ export default function ChatPage() {
               {/* Vista de Calendario */}
               {activeView === 'calendar' && (
                 <div className="space-y-4">
-                  {/* Header del calendario con mes/año */}
+                  {/* Header del calendario con mes/año y controles de navegación */}
                   <div className="flex items-center justify-between mb-4">
+                    <button
+                      onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))}
+                      className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 text-sm font-medium"
+                    >
+                      ← Anterior
+                    </button>
+                    
                     <h3 className="text-2xl font-bold text-gray-800">
-                      📅 {new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).charAt(0).toUpperCase() + new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).slice(1)}
+                      📅 {calendarDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).charAt(0).toUpperCase() + calendarDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).slice(1)}
                     </h3>
+                    
+                    <button
+                      onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))}
+                      className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 text-sm font-medium"
+                    >
+                      Siguiente →
+                    </button>
+                  </div>
+
+                  {/* Botón para volver a hoy */}
+                  <div className="flex justify-center mb-2">
+                    <button
+                      onClick={() => setCalendarDate(new Date())}
+                      className="px-4 py-1 text-xs bg-cyan-100 text-cyan-700 rounded-full hover:bg-cyan-200"
+                    >
+                      📍 Hoy
+                    </button>
                   </div>
 
                   {/* Grid del calendario */}
@@ -1018,8 +1112,8 @@ export default function ChatPage() {
                     <div className="grid grid-cols-7">
                       {(() => {
                         const today = new Date();
-                        const year = today.getFullYear();
-                        const month = today.getMonth();
+                        const year = calendarDate.getFullYear();
+                        const month = calendarDate.getMonth();
                         const firstDay = new Date(year, month, 1);
                         const lastDay = new Date(year, month + 1, 0);
                         const daysInMonth = lastDay.getDate();

@@ -13,10 +13,17 @@ enum Priority {
   high
 }
 
+enum TaskStatus {
+  pending
+  inProgress
+  completed
+}
+
 model Task {
   id          String     @id @default(uuid())
   title       String
   completed   Boolean    @default(false)
+  status      TaskStatus @default(pending)
   priority    Priority   @default(medium)
   category    String?
   dueDate     DateTime?

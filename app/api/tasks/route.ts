@@ -108,6 +108,7 @@ export async function PUT(req: NextRequest) {
       data: {
         title: parsed.title,
         completed: parsed.completed,
+        status: parsed.status,
         priority: parsed.priority,
         dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
         category: parsed.category,

@@ -196,11 +196,12 @@ function createTools(userId: string) {
       taskId: z.string().describe('ID exacto de la tarea (campo id obtenido con searchTasks)'),
       title: z.string().optional().describe('Nuevo título'),
       completed: z.boolean().optional().describe('Estado de completitud'),
+      status: z.enum(['pending', 'inProgress', 'completed']).optional().describe('Estado de la tarea: pending, inProgress, completed'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Nueva prioridad'),
       dueDate: z.string().optional().describe('Nueva fecha límite'),
       category: z.string().optional().describe('Nueva categoría'),
     }),
-    execute: async ({ taskId, title, completed, priority, dueDate, category }: any) => {
+    execute: async ({ taskId, title, completed, status, priority, dueDate, category }: any) => {
       // Verificar ownership - primero buscar la tarea
       const existingTask = await prisma.task.findFirst({
         where: { id: taskId, userId: userId },
@@ -212,10 +213,20 @@ function createTools(userId: string) {
 
       const updateData: any = {};
       if (title !== undefined) updateData.title = title;
+      if (status !== undefined) {
+        updateData.status = status;
+        if (status === 'completed') {
+          updateData.completed = true;
+          updateData.completedAt = new Date();
+        } else {
+          updateData.completed = false;
+        }
+      }
       if (completed !== undefined) {
         updateData.completed = completed;
         if (completed) {
           updateData.completedAt = new Date();
+          updateData.status = 'completed';
         }
       }
       if (priority !== undefined) updateData.priority = priority;
@@ -266,11 +277,12 @@ function createTools(userId: string) {
       titleQuery: z.string().describe('Título o palabras clave de la tarea a buscar'),
       title: z.string().optional().describe('Nuevo título'),
       completed: z.boolean().optional().describe('Nuevo estado de completitud'),
+      status: z.enum(['pending', 'inProgress', 'completed']).optional().describe('Estado de la tarea'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Nueva prioridad'),
       dueDate: z.string().optional().describe('Nueva fecha límite'),
       category: z.string().optional().describe('Nueva categoría'),
     }),
-    execute: async ({ titleQuery, title, completed, priority, dueDate, category }: any) => {
+    execute: async ({ titleQuery, title, completed, status, priority, dueDate, category }: any) => {
       // Función para normalizar texto (sin tildes, minúsculas, sin espacios extra)
       const normalize = (text: string) => 
         text.toLowerCase()
@@ -316,9 +328,21 @@ function createTools(userId: string) {
       const task = bestMatch;
       const updateData: any = {};
       if (title !== undefined) updateData.title = title;
+      if (status !== undefined) {
+        updateData.status = status;
+        if (status === 'completed') {
+          updateData.completed = true;
+          updateData.completedAt = new Date();
+        } else {
+          updateData.completed = false;
+        }
+      }
       if (completed !== undefined) {
         updateData.completed = completed;
-        if (completed) updateData.completedAt = new Date();
+        if (completed) {
+          updateData.completedAt = new Date();
+          updateData.status = 'completed';
+        }
       }
       if (priority !== undefined) updateData.priority = priority;
       if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
@@ -392,6 +416,41 @@ function createTools(userId: string) {
         success: true,
         deletedTask: task.title,
         message: `Tarea "${task.title}" eliminada correctamente`,
+      };
+    },
+  },
+
+  createSubtask: {
+    description: 'Crear una subtarea para una tarea existente. Usa searchTasks primero para obtener el taskId.',
+    parameters: z.object({
+      taskId: z.string().describe('ID de la tarea padre'),
+      title: z.string().describe('Título de la subtarea'),
+    }),
+    execute: async ({ taskId, title }: any) => {
+      // Verificar que la tarea existe y pertenece al usuario
+      const task = await prisma.task.findFirst({
+        where: { id: taskId, userId: userId },
+        include: { subtasks: true },
+      });
+      
+      if (!task) {
+        return { error: 'Tarea no encontrada o no tienes permiso', success: false };
+      }
+
+      const order = task.subtasks.length;
+      
+      const subtask = await prisma.subtask.create({
+        data: {
+          title,
+          taskId,
+          order,
+        },
+      });
+
+      return {
+        success: true,
+        subtask,
+        message: `Subtarea "${title}" creada para la tarea "${task.title}"`,
       };
     },
   },
@@ -625,12 +684,30 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
 
 📋 HERRAMIENTAS DISPONIBLES:
 1. createTask - Crear tareas nuevas
-2. editTaskByTitle - Editar tareas por nombre
-3. deleteTaskByTitle - Eliminar tareas por nombre
-4. searchTasks - Buscar y listar tareas
-5. getTaskStats - Ver estadísticas (usa includeAdvanced: true)
-6. updateTask - Actualizar por ID
-7. deleteTask - Eliminar por ID
+2. createSubtask - Crear subtareas (pasos) para una tarea existente
+3. editTaskByTitle - Editar tareas por nombre
+4. deleteTaskByTitle - Eliminar tareas por nombre
+5. searchTasks - Buscar y listar tareas
+6. getTaskStats - Ver estadísticas (usa includeAdvanced: true)
+7. updateTask - Actualizar por ID
+8. deleteTask - Eliminar por ID
+
+🔄 ESTADOS DE TAREAS:
+Las tareas pueden estar en 3 estados:
+- "pending" (⏳ Pendiente): Tarea aún no iniciada
+- "inProgress" (🔄 En proceso): Tarea que se está trabajando actualmente
+- "completed" (✅ Completada): Tarea finalizada
+
+Cuando el usuario diga:
+- "empecé X", "estoy haciendo X", "trabajando en X" → marca como inProgress
+- "terminé X", "completé X", "listo X" → marca como completed
+- "todavía no empecé X" → marca como pending
+
+📦 SUBTAREAS:
+Cuando el usuario quiera dividir una tarea en pasos:
+- "divide X en pasos", "crea subtareas para X", "qué pasos necesito para X"
+- Usa createSubtask para cada paso
+- Primero busca la tarea con searchTasks para obtener su ID
 
 ✅ CATEGORÍAS (NUNCA uses "other"):
 - "estudios" → académico, universidad, examen, estudiar
@@ -688,6 +765,11 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
               taskId: { type: 'string', description: 'ID de la tarea a actualizar' },
               title: { type: 'string', description: 'Nuevo título' },
               completed: { type: 'boolean', description: 'Estado de completitud' },
+              status: { 
+                type: 'string', 
+                enum: ['pending', 'inProgress', 'completed'],
+                description: 'Estado de la tarea: pending (pendiente), inProgress (en proceso), completed (completada)' 
+              },
               priority: { 
                 type: 'string', 
                 enum: ['low', 'medium', 'high'],
@@ -725,6 +807,11 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
               titleQuery: { type: 'string', description: 'Título o palabras clave de la tarea' },
               title: { type: 'string', description: 'Nuevo título' },
               completed: { type: 'boolean', description: 'Nuevo estado' },
+              status: { 
+                type: 'string', 
+                enum: ['pending', 'inProgress', 'completed'],
+                description: 'Estado de la tarea' 
+              },
               priority: { 
                 type: 'string', 
                 enum: ['low', 'medium', 'high'],
@@ -748,6 +835,21 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
               titleQuery: { type: 'string', description: 'Título o palabras clave de la tarea a eliminar' },
             },
             required: ['titleQuery'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'createSubtask',
+          description: 'Crear una subtarea para una tarea existente. Primero usa searchTasks para obtener el ID de la tarea.',
+          parameters: {
+            type: 'object',
+            properties: {
+              taskId: { type: 'string', description: 'ID de la tarea padre' },
+              title: { type: 'string', description: 'Título de la subtarea' },
+            },
+            required: ['taskId', 'title'],
           },
         },
       },
@@ -832,6 +934,8 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
           result = await toolFunctions.editTaskByTitle.execute(functionArgs);
         } else if (functionName === 'deleteTaskByTitle' && toolFunctions.deleteTaskByTitle) {
           result = await toolFunctions.deleteTaskByTitle.execute(functionArgs);
+        } else if (functionName === 'createSubtask' && toolFunctions.createSubtask) {
+          result = await toolFunctions.createSubtask.execute(functionArgs);
         } else if (functionName === 'searchTasks' && toolFunctions.searchTasks) {
           result = await toolFunctions.searchTasks.execute(functionArgs);
         } else if (functionName === 'getTaskStats' && toolFunctions.getTaskStats) {
