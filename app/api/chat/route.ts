@@ -7,12 +7,16 @@ import type Groq from 'groq-sdk';
 
 /**
  * Función auxiliar para parsear fechas naturales a ISO
+ * Usa la fecha actual del servidor para calcular fechas relativas
  */
 function parseNaturalDate(dateStr: string): string | null {
   if (!dateStr) return null;
   
+  // Usar la fecha actual del servidor (Argentina timezone aware)
   const now = new Date();
   const lowerStr = dateStr.toLowerCase().trim();
+  
+  console.log('[parseNaturalDate] Input:', dateStr, '| Fecha actual servidor:', now.toLocaleString('es-AR'));
   
   // Mañana (sin incluir "pasado mañana")
   if ((lowerStr.includes('mañana') || lowerStr.includes('manana')) && !lowerStr.includes('pasado')) {
@@ -586,11 +590,32 @@ export async function POST(request: NextRequest) {
 
     const { messages } = await request.json();
 
+    // Obtener fecha y hora actual para el contexto del AI
+    const now = new Date();
+    const fechaActual = now.toLocaleDateString('es-AR', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    const horaActual = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    const diaNumerico = now.getDate();
+    const mesNumerico = now.getMonth() + 1;
+    const anioNumerico = now.getFullYear();
+
     // Crear tools con el userId del usuario autenticado
     const toolFunctions = createTools(user.id);
 
     // Crear el prompt del sistema
     const systemPrompt = `Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes el lenguaje natural y ayudas a crear tareas de forma automática.
+
+📅 FECHA Y HORA ACTUAL: ${fechaActual}, ${horaActual} (${diaNumerico}/${mesNumerico}/${anioNumerico})
+- Usa esta fecha como referencia para calcular fechas relativas
+- "mañana" = ${new Date(now.getTime() + 24*60*60*1000).toLocaleDateString('es-AR')}
+- "lunes que viene" = calcula desde HOY (${now.toLocaleDateString('es-AR', { weekday: 'long' })})
+- "31/12" sin año = 31/12/${mesNumerico === 12 && diaNumerico > 31 ? anioNumerico + 1 : anioNumerico}
+
+Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes el lenguaje natural y ayudas a crear tareas de forma automática.
 
 🎯 COMPORTAMIENTO PRINCIPAL:
 - Cuando el usuario dice "tengo que X", "necesito X", "debo X" → Crea tareas automáticamente

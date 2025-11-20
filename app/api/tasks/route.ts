@@ -56,6 +56,11 @@ export async function GET(req: NextRequest) {
         ...(parsed.priority && { priority: parsed.priority as "low" | "medium" | "high" }),
         ...(parsed.category && { category: parsed.category }),
       },
+      include: {
+        subtasks: {
+          orderBy: { order: 'asc' },
+        },
+      },
       orderBy: parsed.sortBy
         ? { [parsed.sortBy]: parsed.sortOrder || "asc" }
         : { createdAt: "desc" },

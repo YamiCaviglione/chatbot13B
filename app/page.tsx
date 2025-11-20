@@ -5,6 +5,16 @@ import { useAuth } from '@/lib/context/AuthContext';
 import { useRouter } from 'next/navigation';
 
 // Interfaz para las tareas
+interface Subtask {
+  id: string;
+  title: string;
+  completed: boolean;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+  taskId: string;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -14,6 +24,7 @@ interface Task {
   dueDate?: string;
   createdAt: string;
   updatedAt: string;
+  subtasks?: Subtask[];
 }
 
 // Interfaz para los mensajes
@@ -71,6 +82,8 @@ export default function ChatPage() {
   const [loadingStats, setLoadingStats] = useState(false);
   const [showViews, setShowViews] = useState(false);
   const [activeView, setActiveView] = useState<'list' | 'calendar' | 'kanban' | 'charts'>('list');
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState<{ [taskId: string]: string }>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user, isLoading: authLoading, logout } = useAuth();
@@ -174,6 +187,74 @@ export default function ChatPage() {
       }
     }
     loadTasks();
+  };
+
+  // Funciones para subtareas
+  const toggleTaskExpansion = (taskId: string) => {
+    setExpandedTasks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId);
+      } else {
+        newSet.add(taskId);
+      }
+      return newSet;
+    });
+  };
+
+  const createSubtask = async (taskId: string) => {
+    const title = newSubtaskTitle[taskId]?.trim();
+    if (!title) return;
+
+    try {
+      const response = await fetch('/api/subtasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ taskId, title }),
+      });
+
+      if (response.ok) {
+        setNewSubtaskTitle(prev => ({ ...prev, [taskId]: '' }));
+        loadTasks();
+      }
+    } catch (error) {
+      console.error('Error al crear subtarea:', error);
+    }
+  };
+
+  const toggleSubtask = async (subtaskId: string, completed: boolean) => {
+    try {
+      await fetch('/api/subtasks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ id: subtaskId, completed: !completed }),
+      });
+      loadTasks();
+    } catch (error) {
+      console.error('Error al actualizar subtarea:', error);
+    }
+  };
+
+  const deleteSubtask = async (subtaskId: string) => {
+    try {
+      await fetch(`/api/subtasks?id=${subtaskId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      loadTasks();
+    } catch (error) {
+      console.error('Error al eliminar subtarea:', error);
+    }
+  };
+
+  const getSubtaskProgress = (task: Task) => {
+    if (!task.subtasks || task.subtasks.length === 0) return null;
+    const completed = task.subtasks.filter(s => s.completed).length;
+    const total = task.subtasks.length;
+    const percentage = (completed / total) * 100;
+    return { completed, total, percentage };
   };
 
   // Función para cargar estadísticas avanzadas
@@ -281,9 +362,9 @@ export default function ChatPage() {
   // Color de prioridad
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case 'high': return 'bg-red-100 text-red-800 border-red-300';
-      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'low': return 'bg-green-100 text-green-800 border-green-300';
+      case 'high': return 'bg-indigo-100 text-indigo-800 border-indigo-300';
+      case 'medium': return 'bg-cyan-100 text-cyan-800 border-cyan-300';
+      case 'low': return 'bg-gray-100 text-gray-800 border-gray-300';
       default: return 'bg-gray-100 text-gray-800 border-gray-300';
     }
   };
@@ -321,7 +402,7 @@ export default function ChatPage() {
               </div>
               <button
                 onClick={() => setShowViews(true)}
-                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
               >
                 👁️ Vistas
               </button>
@@ -361,7 +442,7 @@ export default function ChatPage() {
                       <div className="bg-blue-50 p-2 rounded">"Crea una tarea urgente"</div>
                       <div className="bg-green-50 p-2 rounded">"Muestra mis tareas"</div>
                       <div className="bg-yellow-50 p-2 rounded">"Busca tareas de trabajo"</div>
-                      <div className="bg-purple-50 p-2 rounded">"Dame estadísticas"</div>
+                      <div className="bg-indigo-50 p-2 rounded">"Dame estadísticas"</div>
                     </div>
                   </div>
                 )}
@@ -478,64 +559,148 @@ export default function ChatPage() {
                     <p className="text-xs mt-1">Pídele a la IA que cree una</p>
                   </div>
                 ) : (
-                  tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className={`bg-white border-2 rounded-lg p-3 transition-all hover:shadow-md ${
-                        task.completed ? 'border-gray-200 opacity-60' : 'border-blue-200'
-                      }`}
-                    >
-                      <div className="flex items-start space-x-2">
-                        <input
-                          type="checkbox"
-                          checked={task.completed}
-                          onChange={() => toggleTask(task.id, task.completed)}
-                          className="mt-1 w-4 h-4 cursor-pointer transition-all duration-200"
-                        />
-                        <div className="flex-1">
-                          <p
-                            className={`font-medium text-sm ${
-                              task.completed ? 'line-through text-gray-500' : 'text-gray-800'
-                            }`}
-                          >
-                            {task.title}
-                          </p>
-                          <div className="mt-2 space-y-1">
-                            <div className="flex flex-wrap gap-1">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
-                                {task.priority === 'high' && '🔴 Alta'}
-                                {task.priority === 'medium' && '🟡 Media'}
-                                {task.priority === 'low' && '🟢 Baja'}
-                              </span>
-                              {task.category && (
-                                <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
-                                  {task.category}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-500 space-y-0.5">
-                              {task.dueDate && (
-                                <div className="flex items-center gap-1">
-                                  <span>📅</span>
-                                  <span>Vence: {new Date(task.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                                </div>
-                              )}
-                              <div className="flex items-center gap-1">
-                                <span>🕐</span>
-                                <span>Creada: {new Date(task.createdAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                  tasks.map((task) => {
+                    const progress = getSubtaskProgress(task);
+                    const isExpanded = expandedTasks.has(task.id);
+                    
+                    return (
+                      <div
+                        key={task.id}
+                        className={`bg-white border-2 rounded-lg transition-all hover:shadow-md ${
+                          task.completed ? 'border-gray-200 opacity-60' : 'border-blue-200'
+                        }`}
+                      >
+                        <div className="p-3">
+                          <div className="flex items-start space-x-2">
+                            <input
+                              type="checkbox"
+                              checked={task.completed}
+                              onChange={() => toggleTask(task.id, task.completed)}
+                              className="mt-1 w-4 h-4 cursor-pointer transition-all duration-200"
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between">
+                                <p
+                                  className={`font-medium text-sm ${
+                                    task.completed ? 'line-through text-gray-500' : 'text-gray-800'
+                                  }`}
+                                >
+                                  {task.title}
+                                </p>
+                                <button
+                                  onClick={() => toggleTaskExpansion(task.id)}
+                                  className="ml-2 px-2 py-0.5 text-xs text-cyan-600 hover:text-cyan-800 hover:bg-cyan-50 rounded"
+                                  title="Subtareas"
+                                >
+                                  {isExpanded ? '▼ Subtareas' : '▶ Subtareas'}
+                                </button>
                               </div>
-                              {task.updatedAt !== task.createdAt && (
-                                <div className="flex items-center gap-1">
-                                  <span>✏️</span>
-                                  <span>Editada: {new Date(task.updatedAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                              
+                              {/* Barra de progreso de subtareas */}
+                              {progress && (
+                                <div className="mt-2">
+                                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                                    <span>{progress.completed}/{progress.total} subtareas</span>
+                                    <span>{progress.percentage.toFixed(0)}%</span>
+                                  </div>
+                                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                    <div
+                                      className="bg-cyan-600 h-1.5 rounded-full transition-all duration-300"
+                                      style={{ width: `${progress.percentage}%` }}
+                                    ></div>
+                                  </div>
                                 </div>
                               )}
+
+                              <div className="mt-2 space-y-1">
+                                <div className="flex flex-wrap gap-1">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
+                                    {task.priority === 'high' && '🔴 Alta'}
+                                    {task.priority === 'medium' && '🟡 Media'}
+                                    {task.priority === 'low' && '🟢 Baja'}
+                                  </span>
+                                  {task.category && (
+                                    <span className="px-2 py-0.5 rounded-full text-xs bg-indigo-100 text-indigo-800">
+                                      {task.category}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-gray-500 space-y-0.5">
+                                  {task.dueDate && (
+                                    <div className="flex items-center gap-1">
+                                      <span>📅</span>
+                                      <span>Vence: {new Date(task.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-1">
+                                    <span>🕐</span>
+                                    <span>Creada: {new Date(task.createdAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                                  </div>
+                                  {task.updatedAt !== task.createdAt && (
+                                    <div className="flex items-center gap-1">
+                                      <span>✏️</span>
+                                      <span>Editada: {new Date(task.updatedAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </div>
+
+                        {/* Subtareas expandibles */}
+                        {isExpanded && task.subtasks && task.subtasks.length > 0 && (
+                          <div className="border-t border-gray-200 bg-gray-50 px-3 py-2">
+                            <div className="space-y-1">
+                              {task.subtasks.map((subtask) => (
+                                <div key={subtask.id} className="flex items-center justify-between group">
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={subtask.completed}
+                                      onChange={() => toggleSubtask(subtask.id, subtask.completed)}
+                                      className="w-3 h-3 cursor-pointer"
+                                    />
+                                    <span className={`text-xs ${subtask.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+                                      {subtask.title}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => deleteSubtask(subtask.id)}
+                                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-xs"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Input para nueva subtarea */}
+                        {isExpanded && (
+                          <div className="border-t border-gray-200 bg-gray-50 px-3 py-2">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={newSubtaskTitle[task.id] || ''}
+                                onChange={(e) => setNewSubtaskTitle(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                onKeyPress={(e) => e.key === 'Enter' && createSubtask(task.id)}
+                                placeholder="Nueva subtarea..."
+                                className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                              />
+                              <button
+                                onClick={() => createSubtask(task.id)}
+                                className="px-3 py-1 bg-cyan-600 text-white text-xs rounded hover:bg-cyan-700"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
@@ -584,7 +749,7 @@ export default function ChatPage() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header del modal */}
-            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
+            <div className="bg-gradient-to-r from-indigo-500 to-purple-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold">📊 Estadísticas Avanzadas</h2>
@@ -611,8 +776,8 @@ export default function ChatPage() {
               ) : stats ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Resumen general */}
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
-                    <h3 className="font-bold text-xl text-blue-900 mb-4 flex items-center gap-2">
+                  <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
+                    <h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
                       <span>📊</span> Resumen General
                     </h3>
                     <div className="space-y-3 text-gray-700">
@@ -622,16 +787,16 @@ export default function ChatPage() {
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Completadas:</span>
-                        <span className="font-bold text-xl text-green-600">{stats.completedTasks}</span>
+                        <span className="font-bold text-xl text-cyan-600">{stats.completedTasks}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Pendientes:</span>
-                        <span className="font-bold text-xl text-orange-600">{stats.pendingTasks}</span>
+                        <span className="font-bold text-xl text-gray-600">{stats.pendingTasks}</span>
                       </div>
-                      <div className="pt-3 border-t border-blue-300">
+                      <div className="pt-3 border-t border-cyan-300">
                         <div className="flex justify-between items-center">
                           <span className="font-semibold">Tasa de completitud:</span>
-                          <span className="font-bold text-2xl text-blue-600">{stats.completionRate.toFixed(1)}%</span>
+                          <span className="font-bold text-2xl text-cyan-600">{stats.completionRate.toFixed(1)}%</span>
                         </div>
                       </div>
                     </div>
@@ -639,8 +804,8 @@ export default function ChatPage() {
 
                   {/* Por categoría */}
                   {stats.byCategory && Object.keys(stats.byCategory).length > 0 && (
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
-                      <h3 className="font-bold text-xl text-purple-900 mb-4 flex items-center gap-2">
+                    <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-xl border border-indigo-200">
+                      <h3 className="font-bold text-xl text-indigo-900 mb-4 flex items-center gap-2">
                         <span>📂</span> Por Categoría
                       </h3>
                       <div className="space-y-2">
@@ -648,14 +813,14 @@ export default function ChatPage() {
                           <div key={cat} className="bg-white p-3 rounded-lg">
                             <div className="flex justify-between items-center mb-1">
                               <span className="capitalize font-medium text-gray-700">{cat}</span>
-                              <span className="font-bold text-purple-600">{data.completionRate.toFixed(0)}%</span>
+                              <span className="font-bold text-indigo-600">{data.completionRate.toFixed(0)}%</span>
                             </div>
                             <div className="text-sm text-gray-600">
                               {data.completed}/{data.total} completadas
                             </div>
                             <div className="mt-2 bg-gray-200 rounded-full h-2">
                               <div 
-                                className="bg-purple-600 h-2 rounded-full transition-all duration-500"
+                                className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
                                 style={{ width: `${data.completionRate}%` }}
                               ></div>
                             </div>
@@ -667,8 +832,8 @@ export default function ChatPage() {
 
                   {/* Tendencia de productividad */}
                   {stats.productivityTrend && (
-                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
-                      <h3 className="font-bold text-xl text-green-900 mb-4 flex items-center gap-2">
+                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
+                      <h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
                         <span>📈</span> Tendencia de Productividad
                       </h3>
                       <div className="space-y-3 text-gray-700">
@@ -680,12 +845,12 @@ export default function ChatPage() {
                           <span>Semana anterior:</span>
                           <span className="font-bold text-lg">{stats.productivityTrend.previous} completadas</span>
                         </div>
-                        <div className="pt-3 border-t border-green-300">
+                        <div className="pt-3 border-t border-cyan-300">
                           <div className="flex justify-between items-center">
                             <span className="font-semibold">Estado:</span>
                             <span className={`font-bold text-xl flex items-center gap-2 ${
-                              stats.productivityTrend.status === 'mejorando' ? 'text-green-600' :
-                              stats.productivityTrend.status === 'empeorando' ? 'text-red-600' :
+                              stats.productivityTrend.status === 'mejorando' ? 'text-cyan-600' :
+                              stats.productivityTrend.status === 'empeorando' ? 'text-gray-600' :
                               'text-gray-600'
                             }`}>
                               {stats.productivityTrend.status === 'mejorando' && '↗️ Mejorando'}
@@ -700,23 +865,23 @@ export default function ChatPage() {
 
                   {/* Predicciones */}
                   {stats.predictions && (
-                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
-                      <h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
+                    <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-xl border border-indigo-200">
+                      <h3 className="font-bold text-xl text-indigo-900 mb-4 flex items-center gap-2">
                         <span>🔮</span> Predicciones
                       </h3>
                       <div className="space-y-3 text-gray-700">
                         <div className="bg-white p-3 rounded-lg">
                           <div className="text-sm text-gray-600 mb-1">Tiempo promedio de completitud:</div>
-                          <div className="font-bold text-lg text-cyan-600">{stats.predictions.averageCompletionTime}</div>
+                          <div className="font-bold text-lg text-indigo-600">{stats.predictions.averageCompletionTime}</div>
                         </div>
                         <div className="bg-white p-3 rounded-lg">
                           <div className="text-sm text-gray-600 mb-1">Tareas pendientes:</div>
-                          <div className="font-bold text-lg text-cyan-600">{stats.predictions.pendingTasksCount}</div>
+                          <div className="font-bold text-lg text-indigo-600">{stats.predictions.pendingTasksCount}</div>
                         </div>
                         {stats.predictions.estimatedCompletionDate && (
                           <div className="bg-white p-3 rounded-lg">
                             <div className="text-sm text-gray-600 mb-1">Fecha estimada de finalización:</div>
-                            <div className="font-bold text-lg text-cyan-600">
+                            <div className="font-bold text-lg text-indigo-600">
                               {new Date(stats.predictions.estimatedCompletionDate).toLocaleDateString('es-AR', { 
                                 day: '2-digit', 
                                 month: 'long', 
@@ -731,14 +896,14 @@ export default function ChatPage() {
 
                   {/* Categorías descuidadas */}
                   {stats.neglectedCategories && stats.neglectedCategories.length > 0 && (
-                    <div className="bg-gradient-to-br from-red-50 to-red-100 p-6 rounded-xl border border-red-200 md:col-span-2">
-                      <h3 className="font-bold text-xl text-red-900 mb-4 flex items-center gap-2">
+                    <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-xl border border-gray-300 md:col-span-2">
+                      <h3 className="font-bold text-xl text-gray-800 mb-4 flex items-center gap-2">
                         <span>⚠️</span> Categorías Descuidadas
                       </h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {stats.neglectedCategories.map((cat: any) => (
-                          <div key={cat.category} className="bg-white p-4 rounded-lg border border-red-200">
-                            <div className="capitalize font-bold text-lg text-red-700 mb-2">{cat.category}</div>
+                          <div key={cat.category} className="bg-white p-4 rounded-lg border border-gray-300">
+                            <div className="capitalize font-bold text-lg text-gray-700 mb-2">{cat.category}</div>
                             <div className="text-sm text-gray-600 space-y-1">
                               <div>{cat.pending} tareas pendientes</div>
                               <div>{cat.completionRate.toFixed(0)}% completadas</div>
@@ -772,7 +937,7 @@ export default function ChatPage() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header del modal */}
-            <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 text-white">
+            <div className="bg-gradient-to-r from-indigo-500 to-purple-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold">👁️ Visualizaciones Avanzadas</h2>
@@ -796,7 +961,7 @@ export default function ChatPage() {
                   onClick={() => setActiveView('calendar')}
                   className={`px-6 py-3 rounded-lg font-medium transition-all ${
                     activeView === 'calendar' 
-                      ? 'bg-purple-600 text-white shadow-lg' 
+                      ? 'bg-indigo-600 text-white shadow-lg' 
                       : 'bg-white text-gray-700 hover:bg-gray-100'
                   }`}
                 >
@@ -806,7 +971,7 @@ export default function ChatPage() {
                   onClick={() => setActiveView('kanban')}
                   className={`px-6 py-3 rounded-lg font-medium transition-all ${
                     activeView === 'kanban' 
-                      ? 'bg-purple-600 text-white shadow-lg' 
+                      ? 'bg-indigo-600 text-white shadow-lg' 
                       : 'bg-white text-gray-700 hover:bg-gray-100'
                   }`}
                 >
@@ -816,7 +981,7 @@ export default function ChatPage() {
                   onClick={() => setActiveView('charts')}
                   className={`px-6 py-3 rounded-lg font-medium transition-all ${
                     activeView === 'charts' 
-                      ? 'bg-purple-600 text-white shadow-lg' 
+                      ? 'bg-indigo-600 text-white shadow-lg' 
                       : 'bg-white text-gray-700 hover:bg-gray-100'
                   }`}
                 >
@@ -831,142 +996,127 @@ export default function ChatPage() {
               {/* Vista de Calendario */}
               {activeView === 'calendar' && (
                 <div className="space-y-4">
-                  <h3 className="text-xl font-bold text-gray-800 mb-4">📅 Vista de Calendario</h3>
-                  
-                  {/* Tareas de hoy */}
-                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200">
-                    <h4 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-                      <span className="text-2xl">🔵</span> Hoy
-                    </h4>
-                    <div className="space-y-2">
-                      {tasks.filter(t => {
-                        if (!t.dueDate) return false;
-                        const today = new Date();
-                        const taskDate = new Date(t.dueDate);
-                        return taskDate.toDateString() === today.toDateString();
-                      }).map(task => (
-                        <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm">
-                          <div className="flex items-center gap-2">
-                            <input 
-                              type="checkbox" 
-                              checked={task.completed}
-                              onChange={() => toggleTask(task.id, task.completed)}
-                              className="w-4 h-4"
-                            />
-                            <span className={task.completed ? 'line-through text-gray-500' : 'text-gray-800'}>
-                              {task.title}
-                            </span>
-                            <span className={`ml-auto px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
-                              {task.priority === 'high' && '🔴'}
-                              {task.priority === 'medium' && '🟡'}
-                              {task.priority === 'low' && '🟢'}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {tasks.filter(t => {
-                        if (!t.dueDate) return false;
-                        const today = new Date();
-                        const taskDate = new Date(t.dueDate);
-                        return taskDate.toDateString() === today.toDateString();
-                      }).length === 0 && (
-                        <p className="text-gray-500 text-sm italic">No hay tareas para hoy</p>
-                      )}
-                    </div>
+                  {/* Header del calendario con mes/año */}
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-2xl font-bold text-gray-800">
+                      📅 {new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).charAt(0).toUpperCase() + new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).slice(1)}
+                    </h3>
                   </div>
 
-                  {/* Próximos 7 días */}
-                  <div className="bg-gradient-to-r from-green-50 to-green-100 p-4 rounded-xl border border-green-200">
-                    <h4 className="font-semibold text-green-900 mb-3 flex items-center gap-2">
-                      <span className="text-2xl">🟢</span> Próximos 7 días
-                    </h4>
-                    <div className="space-y-2">
-                      {tasks.filter(t => {
-                        if (!t.dueDate) return false;
-                        const today = new Date();
-                        const taskDate = new Date(t.dueDate);
-                        const diffDays = Math.ceil((taskDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                        return diffDays > 0 && diffDays <= 7;
-                      }).map(task => (
-                        <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm">
-                          <div className="flex items-center gap-2">
-                            <input 
-                              type="checkbox" 
-                              checked={task.completed}
-                              onChange={() => toggleTask(task.id, task.completed)}
-                              className="w-4 h-4"
-                            />
-                            <div className="flex-1">
-                              <span className={task.completed ? 'line-through text-gray-500' : 'text-gray-800'}>
-                                {task.title}
-                              </span>
-                              <span className="block text-xs text-gray-500 mt-1">
-                                {new Date(task.dueDate!).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'short' })}
-                              </span>
-                            </div>
-                            <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
-                              {task.priority === 'high' && '🔴'}
-                              {task.priority === 'medium' && '🟡'}
-                              {task.priority === 'low' && '🟢'}
-                            </span>
-                          </div>
+                  {/* Grid del calendario */}
+                  <div className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden">
+                    {/* Días de la semana */}
+                    <div className="grid grid-cols-7 bg-gradient-to-r from-indigo-500 to-purple-500">
+                      {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
+                        <div key={day} className="py-3 text-center text-sm font-semibold text-white border-r border-white/20 last:border-r-0">
+                          {day}
                         </div>
                       ))}
-                      {tasks.filter(t => {
-                        if (!t.dueDate) return false;
-                        const today = new Date();
-                        const taskDate = new Date(t.dueDate);
-                        const diffDays = Math.ceil((taskDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                        return diffDays > 0 && diffDays <= 7;
-                      }).length === 0 && (
-                        <p className="text-gray-500 text-sm italic">No hay tareas próximas</p>
-                      )}
                     </div>
-                  </div>
 
-                  {/* Tareas vencidas */}
-                  {tasks.filter(t => {
-                    if (!t.dueDate || t.completed) return false;
-                    const today = new Date();
-                    const taskDate = new Date(t.dueDate);
-                    return taskDate < today;
-                  }).length > 0 && (
-                    <div className="bg-gradient-to-r from-red-50 to-red-100 p-4 rounded-xl border border-red-200">
-                      <h4 className="font-semibold text-red-900 mb-3 flex items-center gap-2">
-                        <span className="text-2xl">🔴</span> Vencidas
-                      </h4>
-                      <div className="space-y-2">
-                        {tasks.filter(t => {
-                          if (!t.dueDate || t.completed) return false;
-                          const today = new Date();
-                          const taskDate = new Date(t.dueDate);
-                          return taskDate < today;
-                        }).map(task => (
-                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border-l-4 border-red-500">
-                            <div className="flex items-center gap-2">
-                              <input 
-                                type="checkbox" 
-                                checked={task.completed}
-                                onChange={() => toggleTask(task.id, task.completed)}
-                                className="w-4 h-4"
-                              />
-                              <div className="flex-1">
-                                <span className="text-gray-800 font-medium">{task.title}</span>
-                                <span className="block text-xs text-red-600 mt-1">
-                                  Venció: {new Date(task.dueDate!).toLocaleDateString('es-AR')}
-                                </span>
+                    {/* Celdas de los días */}
+                    <div className="grid grid-cols-7">
+                      {(() => {
+                        const today = new Date();
+                        const year = today.getFullYear();
+                        const month = today.getMonth();
+                        const firstDay = new Date(year, month, 1);
+                        const lastDay = new Date(year, month + 1, 0);
+                        const daysInMonth = lastDay.getDate();
+                        const startingDayOfWeek = firstDay.getDay();
+                        const cells = [];
+
+                        // Celdas vacías antes del primer día
+                        for (let i = 0; i < startingDayOfWeek; i++) {
+                          cells.push(
+                            <div key={`empty-${i}`} className="h-24 bg-gray-50 border-r border-b border-gray-200"></div>
+                          );
+                        }
+
+                        // Celdas de los días del mes
+                        for (let day = 1; day <= daysInMonth; day++) {
+                          const cellDate = new Date(year, month, day);
+                          const isToday = cellDate.toDateString() === today.toDateString();
+                          const dayTasks = tasks.filter(t => {
+                            if (!t.dueDate) return false;
+                            const taskDate = new Date(t.dueDate);
+                            return taskDate.toDateString() === cellDate.toDateString();
+                          });
+
+                          cells.push(
+                            <div
+                              key={`day-${day}`}
+                              className={`h-24 p-2 border-r border-b border-gray-200 hover:bg-gray-50 transition-colors ${
+                                isToday ? 'bg-cyan-50' : 'bg-white'
+                              }`}
+                            >
+                              <div className={`text-sm font-semibold mb-1 ${
+                                isToday ? 'text-cyan-600' : 'text-gray-700'
+                              }`}>
+                                {day}
+                                {isToday && <span className="ml-1 text-xs">•</span>}
                               </div>
-                              <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(task.priority)}`}>
-                                {task.priority === 'high' && '🔴'}
-                                {task.priority === 'medium' && '🟡'}
-                                {task.priority === 'low' && '🟢'}
-                              </span>
+                              <div className="space-y-1 overflow-y-auto" style={{ maxHeight: '60px' }}>
+                                {dayTasks.map(task => (
+                                  <div
+                                    key={task.id}
+                                    className={`text-xs px-1.5 py-0.5 rounded truncate ${
+                                      task.completed 
+                                        ? 'bg-gray-100 text-gray-500 line-through' 
+                                        : task.priority === 'high'
+                                        ? 'bg-indigo-100 text-indigo-700'
+                                        : task.priority === 'medium'
+                                        ? 'bg-cyan-100 text-cyan-700'
+                                        : 'bg-gray-100 text-gray-700'
+                                    }`}
+                                    title={task.title}
+                                  >
+                                    {task.title}
+                                  </div>
+                                ))}
+                                {dayTasks.length > 2 && (
+                                  <div className="text-xs text-gray-500 italic">
+                                    +{dayTasks.length - 2} más
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          );
+                        }
+
+                        // Celdas vacías después del último día si es necesario
+                        const totalCells = startingDayOfWeek + daysInMonth;
+                        const remainingCells = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+                        for (let i = 0; i < remainingCells; i++) {
+                          cells.push(
+                            <div key={`empty-end-${i}`} className="h-24 bg-gray-50 border-r border-b border-gray-200"></div>
+                          );
+                        }
+
+                        return cells;
+                      })()}
                     </div>
-                  )}
+                  </div>
+
+                  {/* Leyenda */}
+                  <div className="flex items-center gap-4 justify-center text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-indigo-100 border border-indigo-300"></div>
+                      <span className="text-gray-600">Alta prioridad</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-cyan-100 border border-cyan-300"></div>
+                      <span className="text-gray-600">Media prioridad</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-gray-100 border border-gray-300"></div>
+                      <span className="text-gray-600">Baja prioridad</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-cyan-50 border-2 border-cyan-300"></div>
+                      <span className="text-gray-600">Hoy</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -979,7 +1129,7 @@ export default function ChatPage() {
                     {/* To Do */}
                     <div className="bg-gray-50 rounded-xl p-4 border-2 border-gray-200">
                       <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                        <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                        <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
                         To Do ({tasks.filter(t => !t.completed).length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -999,7 +1149,7 @@ export default function ChatPage() {
                                     {task.priority}
                                   </span>
                                   {task.category && (
-                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                    <span className="px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
                                       {task.category}
                                     </span>
                                   )}
@@ -1017,14 +1167,14 @@ export default function ChatPage() {
                     </div>
 
                     {/* In Progress (simulado - tareas con alta prioridad) */}
-                    <div className="bg-yellow-50 rounded-xl p-4 border-2 border-yellow-300">
-                      <h4 className="font-semibold text-yellow-700 mb-3 flex items-center gap-2">
-                        <span className="w-3 h-3 bg-yellow-500 rounded-full"></span>
+                    <div className="bg-indigo-50 rounded-xl p-4 border-2 border-indigo-300">
+                      <h4 className="font-semibold text-indigo-700 mb-3 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-indigo-500 rounded-full"></span>
                         In Progress ({tasks.filter(t => !t.completed && t.priority === 'high').length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {tasks.filter(t => !t.completed && t.priority === 'high').map(task => (
-                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-yellow-200 hover:shadow-md transition-shadow">
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-indigo-200 hover:shadow-md transition-shadow">
                             <div className="flex items-start gap-2">
                               <input 
                                 type="checkbox" 
@@ -1039,7 +1189,7 @@ export default function ChatPage() {
                                     {task.priority}
                                   </span>
                                   {task.category && (
-                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                    <span className="px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
                                       {task.category}
                                     </span>
                                   )}
@@ -1057,14 +1207,14 @@ export default function ChatPage() {
                     </div>
 
                     {/* Done */}
-                    <div className="bg-green-50 rounded-xl p-4 border-2 border-green-300">
-                      <h4 className="font-semibold text-green-700 mb-3 flex items-center gap-2">
-                        <span className="w-3 h-3 bg-green-500 rounded-full"></span>
+                    <div className="bg-cyan-50 rounded-xl p-4 border-2 border-cyan-300">
+                      <h4 className="font-semibold text-cyan-700 mb-3 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-cyan-500 rounded-full"></span>
                         Done ({tasks.filter(t => t.completed).length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {tasks.filter(t => t.completed).map(task => (
-                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-green-200 hover:shadow-md transition-shadow opacity-75">
+                          <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-cyan-200 hover:shadow-md transition-shadow opacity-75">
                             <div className="flex items-start gap-2">
                               <input 
                                 type="checkbox" 
@@ -1079,7 +1229,7 @@ export default function ChatPage() {
                                     {task.priority}
                                   </span>
                                   {task.category && (
-                                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800">
+                                    <span className="px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
                                       {task.category}
                                     </span>
                                   )}
@@ -1100,12 +1250,12 @@ export default function ChatPage() {
                   <h3 className="text-xl font-bold text-gray-800 mb-4">📊 Gráficos de Productividad</h3>
                   
                   {/* Gráfico de Completitud */}
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200">
-                    <h4 className="font-semibold text-blue-900 mb-4">Tasa de Completitud General</h4>
+                  <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
+                    <h4 className="font-semibold text-cyan-900 mb-4">Tasa de Completitud General</h4>
                     <div className="relative">
                       <div className="h-8 bg-gray-200 rounded-full overflow-hidden">
                         <div 
-                          className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-1000 flex items-center justify-end pr-3"
+                          className="h-full bg-gradient-to-r from-cyan-500 to-cyan-600 transition-all duration-1000 flex items-center justify-end pr-3"
                           style={{ width: `${stats.completionRate}%` }}
                         >
                           <span className="text-white font-bold text-sm">{stats.completionRate.toFixed(1)}%</span>
@@ -1120,8 +1270,8 @@ export default function ChatPage() {
 
                   {/* Gráfico por Categorías */}
                   {stats.byCategory && Object.keys(stats.byCategory).length > 0 && (
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200">
-                      <h4 className="font-semibold text-purple-900 mb-4">Completitud por Categoría</h4>
+                    <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-xl border border-indigo-200">
+                      <h4 className="font-semibold text-indigo-900 mb-4">Completitud por Categoría</h4>
                       <div className="space-y-3">
                         {Object.entries(stats.byCategory).map(([cat, data]: any) => (
                           <div key={cat}>
@@ -1131,7 +1281,7 @@ export default function ChatPage() {
                             </div>
                             <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
                               <div 
-                                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-1000 flex items-center justify-end pr-2"
+                                className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 transition-all duration-1000 flex items-center justify-end pr-2"
                                 style={{ width: `${data.completionRate}%` }}
                               >
                                 {data.completionRate > 15 && (
@@ -1147,8 +1297,8 @@ export default function ChatPage() {
 
                   {/* Tendencia Visual */}
                   {stats.productivityTrend && (
-                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200">
-                      <h4 className="font-semibold text-green-900 mb-4">Tendencia de Productividad (últimas 2 semanas)</h4>
+                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-6 rounded-xl border border-cyan-200">
+                      <h4 className="font-semibold text-cyan-900 mb-4">Tendencia de Productividad (últimas 2 semanas)</h4>
                       <div className="flex items-end justify-around h-40 gap-4">
                         <div className="flex-1 flex flex-col items-center">
                           <div className="w-full bg-gradient-to-t from-gray-400 to-gray-500 rounded-t-lg" 
@@ -1158,17 +1308,17 @@ export default function ChatPage() {
                           <p className="text-2xl font-bold text-gray-600">{stats.productivityTrend.previous}</p>
                         </div>
                         <div className="flex-1 flex flex-col items-center">
-                          <div className="w-full bg-gradient-to-t from-green-500 to-green-600 rounded-t-lg" 
+                          <div className="w-full bg-gradient-to-t from-cyan-500 to-cyan-600 rounded-t-lg" 
                                style={{ height: `${(stats.productivityTrend.current / Math.max(stats.productivityTrend.previous, stats.productivityTrend.current, 1)) * 100}%` }}>
                           </div>
-                          <p className="text-sm font-semibold text-green-700 mt-2">Última Semana</p>
-                          <p className="text-2xl font-bold text-green-600">{stats.productivityTrend.current}</p>
+                          <p className="text-sm font-semibold text-cyan-700 mt-2">Última Semana</p>
+                          <p className="text-2xl font-bold text-cyan-600">{stats.productivityTrend.current}</p>
                         </div>
                       </div>
                       <div className="mt-4 text-center">
                         <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold ${
-                          stats.productivityTrend.status === 'mejorando' ? 'bg-green-200 text-green-800' :
-                          stats.productivityTrend.status === 'empeorando' ? 'bg-red-200 text-red-800' :
+                          stats.productivityTrend.status === 'mejorando' ? 'bg-cyan-200 text-cyan-800' :
+                          stats.productivityTrend.status === 'empeorando' ? 'bg-gray-200 text-gray-800' :
                           'bg-gray-200 text-gray-800'
                         }`}>
                           {stats.productivityTrend.status === 'mejorando' && '↗️ Mejorando'}
@@ -1185,9 +1335,9 @@ export default function ChatPage() {
                 <div className="text-center text-gray-500 py-12">
                   <div className="text-6xl mb-4">📊</div>
                   <p className="text-lg font-semibold">Cargando estadísticas...</p>
-                  <button 
+                  <button
                     onClick={loadStats}
-                    className="mt-4 px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                    className="mt-4 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                   >
                     Cargar Gráficos
                   </button>

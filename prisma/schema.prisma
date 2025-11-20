@@ -14,17 +14,30 @@ enum Priority {
 }
 
 model Task {
+  id          String     @id @default(uuid())
+  title       String
+  completed   Boolean    @default(false)
+  priority    Priority   @default(medium)
+  category    String?
+  dueDate     DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  completedAt DateTime?
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subtasks    Subtask[]  // Relación con subtareas
+}
+
+// Modelo de Subtarea
+model Subtask {
   id          String    @id @default(uuid())
   title       String
   completed   Boolean   @default(false)
-  priority    Priority  @default(medium)
-  category    String?
-  dueDate     DateTime?
+  order       Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  completedAt DateTime?
-  userId      String    // NUEVO CAMPO
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade) // NUEVA RELACIÓN
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 }
 
 //modelo de Usuario
