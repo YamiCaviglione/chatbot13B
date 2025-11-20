@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // o "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Priority {
+  low
+  medium
+  high
+}
+
+enum TaskStatus {
+  pending
+  inProgress
+  completed
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  completed   Boolean    @default(false)
+  status      TaskStatus @default(pending)
+  priority    Priority   @default(medium)
+  category    String?
+  dueDate     DateTime?
+  deleted     Boolean    @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  completedAt DateTime?
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subtasks    Subtask[]  // Relación con subtareas
+}
+
+// Modelo de Subtarea
+model Subtask {
+  id          String    @id @default(uuid())
+  title       String
+  completed   Boolean   @default(false)
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+//modelo de Usuario
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  name            String
+  hashedPassword  String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tasks           Task[]
+  preferences     UserPreferences?
+}
+
+//modelo de preferencias de usuario
+model UserPreferences {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  capitalizeTasks Boolean  @default(false)
+  refreshInterval Int      @default(60)
+  theme           String   @default("light")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
