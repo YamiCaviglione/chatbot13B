@@ -185,6 +185,7 @@ function createTools(userId: string) {
       return {
         success: true,
         task,
+        taskId: task.id,
         message: `Tarea creada: "${title}" con prioridad ${priority || 'media'}${parsedDueDate ? ` para ${new Date(parsedDueDate).toLocaleDateString()}` : ''}`,
       };
     },
@@ -204,7 +205,7 @@ function createTools(userId: string) {
     execute: async ({ taskId, title, completed, status, priority, dueDate, category }: any) => {
       // Verificar ownership - primero buscar la tarea
       const existingTask = await prisma.task.findFirst({
-        where: { id: taskId, userId: userId },
+        where: { id: taskId, userId: userId, deleted: false } as any,
       });
       
       if (!existingTask) {
@@ -253,15 +254,17 @@ function createTools(userId: string) {
     }),
     execute: async ({ taskId }: any) => {
       const existingTask = await prisma.task.findFirst({
-        where: { id: taskId, userId: userId },
+        where: { id: taskId, userId: userId, deleted: false } as any,
       });
       
       if (!existingTask) {
         return { error: 'Tarea no encontrada o no tienes permiso para eliminarla', success: false };
       }
 
-      const deleted = await prisma.task.delete({
+      // Soft delete
+      const deleted = await prisma.task.update({
         where: { id: taskId },
+        data: { deleted: true, deletedAt: new Date() } as any,
       });
       return {
         success: true,
@@ -291,9 +294,9 @@ function createTools(userId: string) {
           .replace(/\s+/g, ' ') // Múltiples espacios a uno
           .trim();
 
-      // Buscar todas las tareas del usuario
+      // Buscar todas las tareas del usuario (solo no eliminadas)
       const allTasks = await prisma.task.findMany({
-        where: { userId: userId },
+        where: { userId: userId, deleted: false } as any,
       });
 
       // Buscar la tarea que mejor coincida
@@ -361,6 +364,47 @@ function createTools(userId: string) {
     },
   },
 
+  deleteTasks: {
+    description: 'Eliminar tareas por categoría, prioridad, estado completado u otros criterios. USA ESTA cuando el usuario pida eliminar por categoría, prioridad, etc.',
+    parameters: z.object({
+      category: z.string().optional().describe('Categoría de las tareas a eliminar'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Prioridad de las tareas'),
+      completed: z.boolean().optional().describe('Estado completado'),
+    }),
+    execute: async ({ category, priority, completed }: any) => {
+      const where: any = {
+        userId: userId,
+        deleted: false,
+      };
+
+      if (category) where.category = category;
+      if (priority) where.priority = priority;
+      if (completed !== undefined) where.completed = completed;
+
+      const tasksToDelete = await prisma.task.findMany({ where });
+
+      if (tasksToDelete.length === 0) {
+        return { 
+          error: `No se encontraron tareas con los criterios especificados`, 
+          success: false 
+        };
+      }
+
+      // Soft delete de todas las tareas encontradas
+      await prisma.task.updateMany({
+        where,
+        data: { deleted: true, deletedAt: new Date() } as any,
+      });
+
+      return {
+        success: true,
+        deletedCount: tasksToDelete.length,
+        message: `${tasksToDelete.length} tarea(s) eliminada(s) correctamente`,
+        tasks: tasksToDelete.map(t => t.title),
+      };
+    },
+  },
+
   deleteTaskByTitle: {
     description: 'Buscar y eliminar una tarea por su título. USA ESTA HERRAMIENTA para eliminar tareas cuando el usuario menciona el título.',
     parameters: z.object({
@@ -375,9 +419,9 @@ function createTools(userId: string) {
           .replace(/\s+/g, ' ')
           .trim();
 
-      // Buscar todas las tareas del usuario
+      // Buscar todas las tareas del usuario (solo no eliminadas)
       const allTasks = await prisma.task.findMany({
-        where: { userId: userId },
+        where: { userId: userId, deleted: false } as any,
       });
 
       // Buscar la tarea que mejor coincida
@@ -429,7 +473,7 @@ function createTools(userId: string) {
     execute: async ({ taskId, title }: any) => {
       // Verificar que la tarea existe y pertenece al usuario
       const task = await prisma.task.findFirst({
-        where: { id: taskId, userId: userId },
+        where: { id: taskId, userId: userId, deleted: false } as any,
         include: { subtasks: true },
       });
       
@@ -456,17 +500,19 @@ function createTools(userId: string) {
   },
 
   searchTasks: {
-    description: 'Buscar y filtrar tareas',
+    description: 'Buscar y filtrar tareas. IMPORTANTE: Retorna el campo "id" de cada tarea para usar en createSubtask',
     parameters: z.object({
-      query: z.string().optional().describe('Texto de búsqueda'),
+      query: z.string().optional().describe('Texto de búsqueda (búsqueda flexible, sin tildes)'),
       completed: z.boolean().optional().describe('Filtrar por estado completado'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Filtrar por prioridad'),
       category: z.string().optional().describe('Filtrar por categoría'),
+      status: z.enum(['pending', 'inProgress', 'completed']).optional().describe('Filtrar por estado'),
       limit: z.number().optional().describe('Número máximo de resultados'),
     }),
-    execute: async ({ query, completed, priority, category, limit }: any) => {
+    execute: async ({ query, completed, priority, category, status, limit }: any) => {
       const where: any = {
         userId: userId, // Solo tareas del usuario
+        deleted: false, // Excluir tareas eliminadas
       };
 
       if (query) {
@@ -481,18 +527,42 @@ function createTools(userId: string) {
       if (category) {
         where.category = category;
       }
+      if (status) {
+        where.status = status;
+      }
 
       const tasks = await prisma.task.findMany({
         where,
         take: limit || 50,
         orderBy: { createdAt: 'desc' },
+        include: {
+          subtasks: {
+            orderBy: { order: 'asc' }
+          }
+        }
       });
+
+      // Formatear para mejor lectura por la IA
+      const formattedTasks = tasks.map(task => ({
+        id: task.id, // ✅ IMPORTANTE: Este es el taskId para createSubtask
+        title: task.title,
+        priority: task.priority,
+        status: task.status,
+        completed: task.completed,
+        category: task.category,
+        dueDate: task.dueDate,
+        subtasks: task.subtasks.map(st => ({
+          id: st.id,
+          title: st.title,
+          completed: st.completed
+        }))
+      }));
 
       return {
         success: true,
-        tasks,
+        tasks: formattedTasks,
         totalFound: tasks.length,
-        message: `Se encontraron ${tasks.length} tareas`,
+        message: `Se encontraron ${tasks.length} tareas. Cada tarea tiene un campo "id" que debes usar para createSubtask.`,
       };
     },
   },
@@ -523,7 +593,7 @@ function createTools(userId: string) {
       }
 
       const allTasks = await prisma.task.findMany({ 
-        where,
+        where: { ...where, deleted: false },
         orderBy: { createdAt: 'asc' }
       });
 
@@ -683,14 +753,15 @@ Eres un asistente de gestión de tareas inteligente y conversacional. Entiendes 
 - SIEMPRE responde algo, nunca quedes en silencio
 
 📋 HERRAMIENTAS DISPONIBLES:
-1. createTask - Crear tareas nuevas
+1. createTask - Crear tareas nuevas (retorna taskId para usar con createSubtask)
 2. createSubtask - Crear subtareas (pasos) para una tarea existente
 3. editTaskByTitle - Editar tareas por nombre
-4. deleteTaskByTitle - Eliminar tareas por nombre
-5. searchTasks - Buscar y listar tareas
-6. getTaskStats - Ver estadísticas (usa includeAdvanced: true)
-7. updateTask - Actualizar por ID
-8. deleteTask - Eliminar por ID
+4. deleteTasks - Eliminar MÚLTIPLES tareas por categoría, prioridad o estado (USA ESTA para "borra tareas de categoría X")
+5. deleteTaskByTitle - Eliminar UNA tarea específica por nombre
+6. searchTasks - Buscar y listar tareas
+7. getTaskStats - Ver estadísticas (usa includeAdvanced: true)
+8. updateTask - Actualizar por ID
+9. deleteTask - Eliminar por ID
 
 🔄 ESTADOS DE TAREAS:
 Las tareas pueden estar en 3 estados:
@@ -704,10 +775,16 @@ Cuando el usuario diga:
 - "todavía no empecé X" → marca como pending
 
 📦 SUBTAREAS:
-Cuando el usuario quiera dividir una tarea en pasos:
-- "divide X en pasos", "crea subtareas para X", "qué pasos necesito para X"
-- Usa createSubtask para cada paso
-- Primero busca la tarea con searchTasks para obtener su ID
+Cuando el usuario quiera dividir una tarea en pasos o agregar subtareas:
+- "divide X en pasos", "crea subtareas para X", "agrega subtarea Y a tarea X"
+- Si la tarea ya existe: 
+  1. Usa searchTasks con el título parcial (ej: query="dormir") para obtener las tareas
+  2. searchTasks retorna un array de tareas con TODA la info (id, title, priority, status, etc)
+  3. Si hay múltiples coincidencias, pregunta al usuario cuál quiere o usa los filtros (priority, status)
+  4. Una vez identificada la tarea, usa createSubtask con el taskId (que está en task.id)
+- Si creas la tarea Y agregas subtareas en el mismo mensaje: usa createTask (que retorna taskId) y luego createSubtask con ese taskId
+- NUNCA necesitas buscar una tarea que acabas de crear - usa el taskId del resultado de createTask
+- IMPORTANTE: searchTasks siempre retorna el campo "id" de cada tarea, úsalo directamente
 
 ✅ CATEGORÍAS (NUNCA uses "other"):
 - "estudios" → académico, universidad, examen, estudiar
@@ -827,6 +904,25 @@ Cuando el usuario quiera dividir una tarea en pasos:
       {
         type: 'function',
         function: {
+          name: 'deleteTasks',
+          description: 'Eliminar múltiples tareas por categoría, prioridad o estado completado',
+          parameters: {
+            type: 'object',
+            properties: {
+              category: { type: 'string', description: 'Categoría de las tareas a eliminar' },
+              priority: { 
+                type: 'string', 
+                enum: ['low', 'medium', 'high'],
+                description: 'Prioridad de las tareas a eliminar'
+              },
+              completed: { type: 'boolean', description: 'Estado completado' },
+            },
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'deleteTaskByTitle',
           description: 'Buscar y eliminar una tarea por su título. USA ESTA cuando el usuario pide eliminar una tarea mencionando su nombre.',
           parameters: {
@@ -857,11 +953,11 @@ Cuando el usuario quiera dividir una tarea en pasos:
         type: 'function',
         function: {
           name: 'searchTasks',
-          description: 'Buscar y filtrar tareas',
+          description: 'Buscar y filtrar tareas. Retorna el campo "id" de cada tarea que debes usar para createSubtask',
           parameters: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: 'Texto de búsqueda' },
+              query: { type: 'string', description: 'Texto de búsqueda (búsqueda flexible)' },
               completed: { type: 'boolean', description: 'Filtrar por estado completado' },
               priority: { 
                 type: 'string', 
@@ -869,6 +965,11 @@ Cuando el usuario quiera dividir una tarea en pasos:
                 description: 'Filtrar por prioridad' 
               },
               category: { type: 'string', description: 'Filtrar por categoría' },
+              status: {
+                type: 'string',
+                enum: ['pending', 'inProgress', 'completed'],
+                description: 'Filtrar por estado de la tarea'
+              },
               limit: { type: 'number', description: 'Número máximo de resultados' },
             },
           },
@@ -932,6 +1033,8 @@ Cuando el usuario quiera dividir una tarea en pasos:
           result = await toolFunctions.deleteTask.execute(functionArgs);
         } else if (functionName === 'editTaskByTitle' && toolFunctions.editTaskByTitle) {
           result = await toolFunctions.editTaskByTitle.execute(functionArgs);
+        } else if (functionName === 'deleteTasks' && toolFunctions.deleteTasks) {
+          result = await toolFunctions.deleteTasks.execute(functionArgs);
         } else if (functionName === 'deleteTaskByTitle' && toolFunctions.deleteTaskByTitle) {
           result = await toolFunctions.deleteTaskByTitle.execute(functionArgs);
         } else if (functionName === 'createSubtask' && toolFunctions.createSubtask) {

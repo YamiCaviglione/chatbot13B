@@ -82,7 +82,8 @@ export default function ChatPage() {
   const [stats, setStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [showViews, setShowViews] = useState(false);
-  const [activeView, setActiveView] = useState<'list' | 'calendar' | 'kanban' | 'charts'>('list');
+  const [activeView, setActiveView] = useState<'list' | 'calendar' | 'kanban' | 'charts' | 'deleted'>('list');
+  const [deletedTasks, setDeletedTasks] = useState<Task[]>([]);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [newSubtaskTitle, setNewSubtaskTitle] = useState<{ [taskId: string]: string }>({});
   const [currentPage, setCurrentPage] = useState(1);
@@ -132,9 +133,12 @@ export default function ChatPage() {
 
   // Función para marcar/desmarcar tarea
   const toggleTask = async (taskId: string, completed: boolean) => {
+    const newCompleted = !completed;
+    const newStatus = newCompleted ? 'completed' : 'pending';
+    
     // Actualización optimista en el frontend
     setTasks(prev => prev.map(t => 
-      t.id === taskId ? { ...t, completed: !completed, updatedAt: new Date().toISOString() } : t
+      t.id === taskId ? { ...t, completed: newCompleted, status: newStatus, updatedAt: new Date().toISOString() } : t
     ));
     
     try {
@@ -142,19 +146,21 @@ export default function ChatPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ id: taskId, completed: !completed }),
+        body: JSON.stringify({ id: taskId, completed: newCompleted, status: newStatus }),
       });
       if (!response.ok) {
         // Revertir cambio si falla
+        const originalStatus = completed ? 'completed' : 'pending';
         setTasks(prev => prev.map(t => 
-          t.id === taskId ? { ...t, completed: completed } : t
+          t.id === taskId ? { ...t, completed: completed, status: originalStatus } : t
         ));
       }
     } catch (error) {
       console.error('Error al actualizar tarea:', error);
       // Revertir cambio si hay error
+      const originalStatus = completed ? 'completed' : 'pending';
       setTasks(prev => prev.map(t => 
-        t.id === taskId ? { ...t, completed: completed } : t
+        t.id === taskId ? { ...t, completed: completed, status: originalStatus } : t
       ));
     }
   };
@@ -282,6 +288,56 @@ export default function ChatPage() {
     return { completed, total, percentage };
   };
 
+  // Funciones para tareas eliminadas
+  const loadDeletedTasks = async () => {
+    try {
+      const response = await fetch('/api/tasks/deleted', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDeletedTasks(data.tasks || []);
+      }
+    } catch (error) {
+      console.error('Error al cargar tareas eliminadas:', error);
+    }
+  };
+
+  const restoreTask = async (taskId: string) => {
+    try {
+      const response = await fetch(`/api/tasks/restore?id=${taskId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+      });
+      
+      if (response.ok) {
+        loadTasks();
+        loadDeletedTasks();
+      }
+    } catch (error) {
+      console.error('Error al restaurar tarea:', error);
+    }
+  };
+
+  const permanentDelete = async (taskId: string) => {
+    if (!confirm('¿Eliminar permanentemente esta tarea? Esta acción no se puede deshacer.')) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/tasks?id=${taskId}&permanent=true`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      
+      if (response.ok) {
+        loadDeletedTasks();
+      }
+    } catch (error) {
+      console.error('Error al eliminar permanentemente:', error);
+    }
+  };
+
   // Función para cargar estadísticas avanzadas
   const loadStats = async () => {
     if (!showStats) {
@@ -367,7 +423,7 @@ export default function ChatPage() {
       setMessages(prev => [...prev, assistantMessage]);
       // Solo recargar tareas si se usó una herramienta de tareas
       if (data.toolCalls && data.toolCalls.some((tc: any) => 
-        ['createTask', 'updateTask', 'deleteTask', 'editTaskByTitle'].includes(tc.tool)
+        ['createTask', 'updateTask', 'deleteTask', 'deleteTasks', 'editTaskByTitle', 'createSubtask'].includes(tc.tool)
       )) {
         loadTasks();
       }
@@ -429,7 +485,7 @@ export default function ChatPage() {
                 onClick={() => setShowViews(true)}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 text-sm font-medium flex items-center gap-2"
               >
-                👁️ Vistas
+                + Herramientas
               </button>
               <button
                 onClick={loadStats}
@@ -1010,7 +1066,7 @@ export default function ChatPage() {
             <div className="bg-gradient-to-r from-indigo-500 to-purple-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold">👁️ Visualizaciones Avanzadas</h2>
+                  <h2 className="text-2xl font-bold">Herramientas Avanzadas</h2>
                   <p className="text-sm opacity-90 mt-1">Explora tus tareas de diferentes formas</p>
                 </div>
                 <button
@@ -1056,6 +1112,16 @@ export default function ChatPage() {
                   }`}
                 >
                   📊 Gráficos
+                </button>
+                <button
+                  onClick={() => { setActiveView('deleted'); loadDeletedTasks(); }}
+                  className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                    activeView === 'deleted' 
+                      ? 'bg-red-600 text-white shadow-lg' 
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  🗑️ Papelera
                 </button>
               </div>
             </div>
@@ -1220,14 +1286,14 @@ export default function ChatPage() {
                   <h3 className="text-xl font-bold text-gray-800 mb-4">📋 Tablero Kanban</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     
-                    {/* To Do */}
+                    {/* To Do - Tareas con status pending */}
                     <div className="bg-gray-50 rounded-xl p-4 border-2 border-gray-200">
                       <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                         <span className="w-3 h-3 bg-gray-500 rounded-full"></span>
-                        To Do ({tasks.filter(t => !t.completed).length})
+                        To Do ({tasks.filter(t => t.status === 'pending').length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
-                        {tasks.filter(t => !t.completed).map(task => (
+                        {tasks.filter(t => t.status === 'pending').map(task => (
                           <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
                             <div className="flex items-start gap-2">
                               <input 
@@ -1260,14 +1326,14 @@ export default function ChatPage() {
                       </div>
                     </div>
 
-                    {/* In Progress (simulado - tareas con alta prioridad) */}
+                    {/* In Progress - Tareas con status inProgress */}
                     <div className="bg-indigo-50 rounded-xl p-4 border-2 border-indigo-300">
                       <h4 className="font-semibold text-indigo-700 mb-3 flex items-center gap-2">
                         <span className="w-3 h-3 bg-indigo-500 rounded-full"></span>
-                        In Progress ({tasks.filter(t => !t.completed && t.priority === 'high').length})
+                        In Progress ({tasks.filter(t => t.status === 'inProgress').length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
-                        {tasks.filter(t => !t.completed && t.priority === 'high').map(task => (
+                        {tasks.filter(t => t.status === 'inProgress').map(task => (
                           <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-indigo-200 hover:shadow-md transition-shadow">
                             <div className="flex items-start gap-2">
                               <input 
@@ -1300,14 +1366,14 @@ export default function ChatPage() {
                       </div>
                     </div>
 
-                    {/* Done */}
+                    {/* Done - Tareas con status completed */}
                     <div className="bg-cyan-50 rounded-xl p-4 border-2 border-cyan-300">
                       <h4 className="font-semibold text-cyan-700 mb-3 flex items-center gap-2">
                         <span className="w-3 h-3 bg-cyan-500 rounded-full"></span>
-                        Done ({tasks.filter(t => t.completed).length})
+                        Done ({tasks.filter(t => t.status === 'completed').length})
                       </h4>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
-                        {tasks.filter(t => t.completed).map(task => (
+                        {tasks.filter(t => t.status === 'completed').map(task => (
                           <div key={task.id} className="bg-white p-3 rounded-lg shadow-sm border border-cyan-200 hover:shadow-md transition-shadow opacity-75">
                             <div className="flex items-start gap-2">
                               <input 
@@ -1435,6 +1501,84 @@ export default function ChatPage() {
                   >
                     Cargar Gráficos
                   </button>
+                </div>
+              )}
+
+              {/* Vista de Papelera */}
+              {activeView === 'deleted' && (
+                <div>
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-xl font-bold text-gray-800">🗑️ Papelera de Tareas</h3>
+                    <p className="text-sm text-gray-600">
+                      {deletedTasks.length} {deletedTasks.length === 1 ? 'tarea eliminada' : 'tareas eliminadas'}
+                    </p>
+                  </div>
+                  
+                  {deletedTasks.length === 0 ? (
+                    <div className="text-center text-gray-500 py-12">
+                      <div className="text-6xl mb-4">🗑️</div>
+                      <p className="text-lg font-semibold">No hay tareas eliminadas</p>
+                      <p className="text-sm mt-2">Las tareas que elimines aparecerán aquí</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {deletedTasks.map(task => (
+                        <div 
+                          key={task.id} 
+                          className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 hover:shadow-md transition-all"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-start gap-3">
+                                <div className="text-2xl opacity-50">🗑️</div>
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-gray-700 opacity-60">{task.title}</h4>
+                                  <div className="flex gap-2 mt-2 flex-wrap">
+                                    <span className={`px-2 py-0.5 rounded text-xs ${getPriorityColor(task.priority)}`}>
+                                      {task.priority}
+                                    </span>
+                                    {task.category && (
+                                      <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                                        {task.category}
+                                      </span>
+                                    )}
+                                    {task.status && (
+                                      <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                                        {task.status === 'pending' ? '⏳ Pendiente' : 
+                                         task.status === 'inProgress' ? '🔄 En proceso' : '✅ Completada'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {task.dueDate && (
+                                    <p className="text-xs text-gray-500 mt-2">
+                                      📅 Vencía: {new Date(task.dueDate).toLocaleDateString('es-AR')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => restoreTask(task.id)}
+                                className="px-3 py-1.5 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors text-sm font-medium"
+                                title="Restaurar tarea"
+                              >
+                                ↩️ Restaurar
+                              </button>
+                              <button
+                                onClick={() => permanentDelete(task.id)}
+                                className="px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                                title="Eliminar permanentemente"
+                              >
+                                🗑️ Eliminar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

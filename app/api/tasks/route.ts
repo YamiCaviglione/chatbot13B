@@ -49,13 +49,14 @@ export async function GET(req: NextRequest) {
     const tasks = await prisma.task.findMany({
       where: {
         userId: user.id,
+        deleted: false, // Excluir tareas eliminadas
         ...(parsed.query && {
           title: { contains: parsed.query },
         }),
         ...(parsed.completed !== undefined && { completed: parsed.completed }),
         ...(parsed.priority && { priority: parsed.priority as "low" | "medium" | "high" }),
         ...(parsed.category && { category: parsed.category }),
-      },
+      } as any,
       include: {
         subtasks: {
           orderBy: { order: 'asc' },
@@ -121,7 +122,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE TASK
+// DELETE TASK (Soft delete por defecto, hard delete con ?permanent=true)
 export async function DELETE(req: NextRequest) {
   try {
     // Verificar autenticación
@@ -135,6 +136,8 @@ export async function DELETE(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
+    const permanent = searchParams.get("permanent") === "true";
+    
     if (!id) throw new Error("Falta el ID de la tarea");
 
     // Verificar que la tarea pertenece al usuario
@@ -152,14 +155,32 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    // Eliminar permanentemente
-    const deleted = await prisma.task.delete({
-      where: { id },
-    });
+    if (permanent) {
+      // Hard delete - eliminar permanentemente
+      const deleted = await prisma.task.delete({
+        where: { id },
+      });
 
-    return NextResponse.json({
-      message: `Tarea "${deleted.title}" eliminada exitosamente`,
-    });
+      return NextResponse.json({
+        message: `Tarea "${deleted.title}" eliminada permanentemente`,
+        permanent: true,
+      });
+    } else {
+      // Soft delete - marcar como eliminada
+      const deleted = await prisma.task.update({
+        where: { id },
+        data: {
+          deleted: true,
+          deletedAt: new Date(),
+        } as any,
+      });
+
+      return NextResponse.json({
+        message: `Tarea "${deleted.title}" movida a la papelera`,
+        permanent: false,
+        canRestore: true,
+      });
+    }
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
